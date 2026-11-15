@@ -66,10 +66,14 @@ class MainToolBar(QToolBar):
                 pass
         self.page = page
         page.contextChanged.connect(self.refresh)
+        self._context_ids = None
+        self.refresh()
+
+    def _rebuild_context(self, actions) -> None:
         for a in self._context:
             self.removeAction(a)
         self._context = []
-        for a in page.context_actions():
+        for a in actions:
             if a is None:
                 sep = QAction(self)
                 sep.setSeparator(True)
@@ -81,13 +85,17 @@ class MainToolBar(QToolBar):
                 if isinstance(button, QToolButton):
                     button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self._context_end.setVisible(bool(self._context))
-        self.refresh()
 
     def refresh(self) -> None:
-        """Re-read the page's Run/Stop state and active chart."""
+        """Re-read the page's contextual actions, Run/Stop state and active chart."""
         page = self.page
         if page is None:
             return
+        actions = page.context_actions()
+        ids = [id(a) for a in actions]
+        if ids != getattr(self, "_context_ids", None):  # the set depends on the page's state (e.g. its tab)
+            self._context_ids = ids
+            self._rebuild_context(actions)
         text = page.primary_text
         self.run_action.setText(text or "Run")
         self.run_action.setToolTip((page.primary_tip or text or "This page has no run command") + "  [F5]")

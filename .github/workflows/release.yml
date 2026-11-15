@@ -35,6 +35,10 @@ jobs:
           pip install "sparsehydro @ git+https://github.com/CoC-MSD/SparseHydro@main" --no-deps
           pip install numpy pandas scipy pyarrow pymoo requests requests-toolbelt
           pip install -e ".[freeze]"
+      - name: Application icon
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python packaging/make_icon.py
       - name: Freeze
         run: pyinstaller packaging/sparsehydro-viewer.spec --noconfirm
       - name: Smoke test frozen build

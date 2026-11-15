@@ -18,7 +18,17 @@ All notable changes are documented here. The format follows
   Projects saved as folders by earlier versions are imported on open.
 - Property editor modelled on QPropertyModel: typed editors with units, limits, choices, descriptions,
   reset to default and multi-object editing; used for site properties and custom attributes
-  ("Add attribute...") on the Data page.
+  ("Add attribute...") on the Sites page.
+- Sites workspace (replaces Data): a tree of sites (with their sensors and datasets) and zones, a map and the
+  time-series chart with calibration/validation periods, and the property editor. The map (Web Mercator,
+  no GIS dependency) draws sites coloured by sensor kind and zones as polygons, with click, Ctrl-click and
+  Shift-drag selection shared with the tree and the rest of the application; "Edit locations" places or
+  drags sites, "Draw zone" digitises a polygon, and a scale bar shows ground distance. An optional
+  OpenStreetMap basemap (cached tiles) is off by default and asks once before anything is downloaded,
+  because the tile server sees the area viewed. The import dialog adds data to a new or existing site,
+  optionally with its location.
+- Application icon (window, taskbar, Windows executable and installer); the installer can associate
+  `.shproj` project files with the viewer.
 - Process builder (Model page): grow a model one process at a time - rainfall losses, a list of unit
   hydrographs, other flow components - with parameter values carried across design changes; new RTK
   triangles start progressively slower. The component-tree editor moves to an Advanced tab.

@@ -34,6 +34,6 @@ exe = EXE(
     exclude_binaries=True,
     name="sparsehydro-viewer",
     console=False,
-    icon=None,
+    icon="app.ico",  # built by packaging/make_icon.py
 )
 coll = COLLECT(exe, a.binaries, a.datas, strip=False, upx=False, name="sparsehydro-viewer")

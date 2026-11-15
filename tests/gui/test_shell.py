@@ -11,7 +11,7 @@ from helpers import spec_for
 from sparsehydro_viewer.core.data import DatasetSpec, Period
 from sparsehydro_viewer.core.solvers import SolverSpec
 
-PAGES = {"Data": 0, "Model": 1, "Events": 2, "Calibrate": 3, "Explore": 4, "Compare": 5}
+PAGES = {"Sites": 0, "Model": 1, "Events": 2, "Calibrate": 3, "Explore": 4, "Compare": 5}
 
 
 @pytest.fixture
@@ -43,7 +43,7 @@ def test_toolbar_is_the_same_everywhere_with_contextual_actions(window) -> None:
     tb = window.toolbar
     fixed = [tb.run_action, tb.stop_action, *tb.chart.actions()]
     expected = {
-        "Data": {"Select calibration", "Select validation", "Zoom to calibration", "Clear period"},
+        "Sites": {"Add site", "Draw zone", "Delete", "Edit locations", "Zoom to selection", "Basemap"},
         "Model": {"Pin shape", "Clear pinned shapes"},
         "Events": {"Previous event", "Next event", "Exclude event", "Restore excluded events"},
         "Calibrate": {"Use run settings", "Explore run", "Delete runs"},
@@ -60,8 +60,8 @@ def test_toolbar_is_the_same_everywhere_with_contextual_actions(window) -> None:
 
 def test_run_button_follows_the_page(window, qtbot, sample_frame, sample_csv) -> None:
     tb = window.toolbar
-    window.nav.setCurrentRow(PAGES["Data"])
-    assert tb.run_action.text() == "Load dataset" and tb.run_action.isVisible()
+    window.nav.setCurrentRow(PAGES["Sites"])
+    assert tb.run_action.text() == "Import data\u2026" and tb.run_action.isVisible()
     window.nav.setCurrentRow(PAGES["Model"])
     assert not tb.run_action.isVisible()  # the Model page has no run command
     window.nav.setCurrentRow(PAGES["Calibrate"])
@@ -73,7 +73,9 @@ def test_run_button_follows_the_page(window, qtbot, sample_frame, sample_csv) ->
 
 def test_chart_actions_bind_to_the_active_chart(window, qtbot, sample_frame, sample_csv) -> None:
     tb = window.toolbar
-    window.nav.setCurrentRow(PAGES["Data"])
+    window.nav.setCurrentRow(PAGES["Sites"])
+    assert tb.chart.plot is None  # the Map tab is not a time series
+    window.pages[0].tabs.setCurrentIndex(1)
     data_plot = window.pages[0].plot
     assert tb.chart.plot is data_plot and tb.chart.fit.isEnabled()
     tb.chart.zoom.trigger()
@@ -93,8 +95,10 @@ def test_chart_actions_bind_to_the_active_chart(window, qtbot, sample_frame, sam
 
 def test_period_selection_is_a_contextual_mode(window, qtbot, sample_frame, sample_csv) -> None:
     _load(window, qtbot, sample_frame, sample_csv)
-    window.nav.setCurrentRow(PAGES["Data"])
+    window.nav.setCurrentRow(PAGES["Sites"])
     page = window.pages[0]
+    page.tabs.setCurrentIndex(1)
+    assert {"Select calibration", "Select validation", "Clear period"} <= set(_context_texts(window))
     page.periods.select["validation"].trigger()
     assert page.plot.mode == "select"
     assert not window.toolbar.chart.pan.isChecked() and not window.toolbar.chart.zoom.isChecked()
@@ -108,7 +112,8 @@ def test_period_selection_is_a_contextual_mode(window, qtbot, sample_frame, samp
 
 def test_status_bar_zones(window, qtbot, sample_frame, sample_csv) -> None:
     _load(window, qtbot, sample_frame, sample_csv)
-    window.nav.setCurrentRow(PAGES["Data"])
+    window.nav.setCurrentRow(PAGES["Sites"])
+    window.pages[0].tabs.setCurrentIndex(1)
     status = window.status
     text = status.context.text()
     assert "sample" in text and "parameters" in text and "calibration: 2022-05-01" in text

@@ -36,11 +36,11 @@ from .calibrate_page import CalibratePage
 from .common import num_item, text_item
 from .compare_page import ComparePage
 from .context import AppContext, LiveController
-from .data_page import DataPage
 from .events_page import EventsPage
 from .explore_page import ExplorePage
 from .model_page import ModelPage
 from .shell import MainToolBar, Page, StandardStatusBar
+from .sites_page import SitesPage
 
 MAX_RECENT = 8
 
@@ -78,7 +78,7 @@ class MainWindow(QMainWindow):
         self.stack = QStackedWidget()
         self.explore = ExplorePage(self.ctx)
         self.pages: list[Page] = [
-            DataPage(self.ctx), ModelPage(self.ctx), EventsPage(self.ctx),
+            SitesPage(self.ctx), ModelPage(self.ctx), EventsPage(self.ctx),
             CalibratePage(self.ctx, show_explore=self.show_explore), self.explore, ComparePage(self.ctx),
         ]
         self.nav.setIconSize(QSize(20, 20))

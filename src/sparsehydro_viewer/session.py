@@ -25,6 +25,8 @@ class Session(QObject):
     projectChanged = Signal()
     projectSaved = Signal()
     nodesChanged = Signal(list)  # iris of sites/sensors/zones whose fields or attributes changed
+    nodesStructureChanged = Signal()  # nodes added or removed
+    nodeSelectionChanged = Signal(list)  # iris selected in the Sites workspace (tree or map)
     datasetChanged = Signal()
     periodsChanged = Signal()  # calibration/validation period of the current dataset
     modelChanged = Signal()
@@ -45,6 +47,7 @@ class Session(QObject):
         self.model_spec: ModelSpec = ModelSpec()
         self.values: dict[str, float] = {}
         self.selected_run: str | None = None
+        self.selected_nodes: list[str] = []
         self.selected_solutions: list[int] = []
         self._dirty = False
         self._reset_values()
@@ -65,8 +68,10 @@ class Session(QObject):
             self.model_spec = ModelSpec()
         self._reset_values()
         self.selected_run, self.selected_solutions = None, []
+        self.selected_nodes = []
         self.set_dirty(False)
         self.projectChanged.emit()
+        self.nodesStructureChanged.emit()
         self.datasetChanged.emit()
         self.modelChanged.emit()
         self.objectivesChanged.emit()
@@ -113,7 +118,11 @@ class Session(QObject):
         self._frames[spec.name] = frame
         self.dataset_name = spec.name
         self.set_dirty()
+        self.nodesStructureChanged.emit()
         self.datasetChanged.emit()
+        site = self.dataset.site_iri if self.dataset is not None else None
+        if site:
+            self.select_nodes([site])
 
     def select_dataset(self, name: str) -> None:
         if name != self.dataset_name:
@@ -125,6 +134,49 @@ class Session(QObject):
     @property
     def store(self):
         return self.project.store
+
+    def select_nodes(self, iris: list[str]) -> None:
+        """Select nodes; a single site with data also becomes the current dataset."""
+        iris = list(dict.fromkeys(iris))
+        if iris == self.selected_nodes:
+            return
+        self.selected_nodes = iris
+        self.nodeSelectionChanged.emit(list(iris))
+        if len(iris) == 1:
+            sets = self.datasets_of(iris[0])
+            if sets and self.dataset_name not in {d.name for d in sets}:
+                self.select_dataset(sets[0].name)
+
+    def datasets_of(self, site_iri: str) -> list[DatasetSpec]:
+        return [d for d in self.project.datasets if d.site_iri == site_iri]
+
+    def add_node(self, table: str, label: str, **fields) -> str:
+        iri = self.project.store.add_node(table, label, **fields)
+        self.set_dirty()
+        self.nodesStructureChanged.emit()
+        return iri
+
+    def delete_nodes(self, iris: list[str]) -> None:
+        """Delete nodes (with their sensors' data); datasets recorded at deleted sites go too."""
+        st = self.project.store
+        gone = set(iris)
+        for iri in list(iris):  # sensors of deleted sites go with them
+            gone |= {n.iri for n in st.sensors_of(iri)}
+        for iri in gone:
+            st.delete_node(iri)
+        before = len(self.project.datasets)
+        self.project.datasets = [d for d in self.project.datasets if d.site_iri not in gone]
+        for name in list(self._frames):
+            if not any(d.name == name for d in self.project.datasets):
+                del self._frames[name]
+        if self.dataset_name and not any(d.name == self.dataset_name for d in self.project.datasets):
+            self.dataset_name = self.project.datasets[0].name if self.project.datasets else None
+        self.selected_nodes = [i for i in self.selected_nodes if i not in gone]
+        self.set_dirty()
+        self.nodesStructureChanged.emit()
+        self.nodeSelectionChanged.emit(list(self.selected_nodes))
+        if len(self.project.datasets) != before:
+            self.datasetChanged.emit()
 
     def update_node(self, iri: str, **fields) -> None:
         """Change a node's own fields (label, description, geometry...) and notify views."""

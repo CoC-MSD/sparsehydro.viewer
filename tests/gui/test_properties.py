@@ -153,7 +153,7 @@ def test_site_properties_on_data_page_save_and_reopen(window, qtbot, sample_fram
     s = window.ctx.session
     with qtbot.waitSignal(window.ctx.controller.result, timeout=15000):
         s.add_dataset(DatasetSpec("MH-12", path=str(sample_csv)), sample_frame)
-    panel = window.pages[0].site_props
+    panel = window.pages[0].props
     site = s.dataset.site_iri
     assert panel.iris == [site]
     model = panel.editor.property_model

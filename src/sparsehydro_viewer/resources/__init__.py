@@ -14,6 +14,23 @@ from PySide6.QtGui import QIcon, QPainter, QPixmap
 from PySide6.QtSvg import QSvgRenderer
 
 ICON_DIR = Path(__file__).parent / "icons"
+APP_ICON_SVG = Path(__file__).parent / "app-icon.svg"
+APP_ICON_SIZES = (16, 20, 24, 32, 40, 48, 64, 128, 256)
+
+
+def app_icon() -> QIcon:
+    """The application's own (full-colour) icon, used for windows, the taskbar and the installer."""
+    renderer = QSvgRenderer(str(APP_ICON_SVG))
+    ic = QIcon()
+    for size in APP_ICON_SIZES:
+        pm = QPixmap(QSize(size, size))
+        pm.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pm)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        renderer.render(painter, QRectF(0, 0, size, size))
+        painter.end()
+        ic.addPixmap(pm)
+    return ic
 
 
 def icon_names() -> list[str]:
@@ -50,4 +67,4 @@ def _render(name: str, color: str, size: int) -> QPixmap:
     return pm
 
 
-__all__ = ["ICON_DIR", "icon", "icon_names"]
+__all__ = ["APP_ICON_SIZES", "APP_ICON_SVG", "ICON_DIR", "app_icon", "icon", "icon_names"]
