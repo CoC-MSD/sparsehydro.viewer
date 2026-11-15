@@ -45,18 +45,59 @@ def _record() -> RunRecord:
     return rec
 
 
-def test_project_round_trip(tmp_path, sample_csv) -> None:
-    proj = Project("site", datasets=[DatasetSpec("d", path=str(sample_csv), calibration=Period("2022-05-01", None))])
+def _same(a: Project, b: Project) -> None:
+    assert [d.to_dict() for d in a.datasets] == [d.to_dict() for d in b.datasets]
+    assert [m.to_dict() for m in a.models] == [m.to_dict() for m in b.models]
+    assert [o.to_dict() for o in a.objectives] == [o.to_dict() for o in b.objectives]
+    assert a.solver.to_dict() == b.solver.to_dict() and a.ui_state == b.ui_state and a.name == b.name
+    assert [r.meta_dict() for r in a.runs] == [r.meta_dict() for r in b.runs]
+
+
+def test_project_file_round_trip(tmp_path, sample_csv, sample_frame) -> None:
+    proj = Project("site")
+    proj.add_dataset(DatasetSpec("d", path=str(sample_csv), calibration=Period("2022-05-01", None)), sample_frame)
     proj.models.append(spec_for("rdii", {"n_triangles": 2}))
     proj.runs.append(_record())
     proj.ui_state["overrides"] = {"d": EventOverrides(deleted_global_ids=[3]).to_dict()}
-    proj.save(tmp_path / "p")
-    back = Project.load(tmp_path / "p")
-    assert back.to_dict() == proj.to_dict()
+    saved = proj.save(tmp_path / "p")
+    assert saved.name == "p.shproj" and saved.exists()
+    back = Project.load(saved)
+    _same(proj, back)
     r0, r1 = proj.runs[0], back.runs[0]
     np.testing.assert_array_equal(r0.pareto_X, r1.pareto_X)
     assert [h[0] for h in r1.history] == [1, 2] and r1.history[1][2].shape == (5, 2)
-    assert back.datasets[0].path == str(sample_csv)
+    # the series come from the project file, not the CSV
+    sample_csv_copy = tmp_path / "gone.csv"
+    assert back.datasets[0].stored and not sample_csv_copy.exists()
+    df = back.frame("d")
+    np.testing.assert_allclose(df["stormflow"].to_numpy(), sample_frame["stormflow"].to_numpy())
+    site = back.datasets[0].site_iri
+    assert back.store.node(site).label == "d"
+
+
+def test_legacy_folder_is_imported(tmp_path, sample_frame) -> None:
+    import json
+
+    folder = tmp_path / "old"
+    (folder / "runs").mkdir(parents=True)
+    sample_frame.to_csv(folder / "data.csv", index=False)
+    rec = _record()
+    rec.save_arrays(folder / "runs" / f"{rec.id}.npz")
+    (folder / "project.json").write_text(json.dumps({
+        "format": 1, "name": "old site",
+        "datasets": [DatasetSpec("d", path="data.csv", calibration=Period("2022-05-02", None)).to_dict(),
+                     DatasetSpec("missing", path="nope.csv").to_dict()],
+        "models": [], "objectives": [{"name": "kge"}], "solver": {"name": "nsga2", "options": {}},
+        "runs": [rec.meta_dict()], "ui_state": {"model": {"kind": "gamma-uh", "options": {}}},
+    }), encoding="utf-8")
+    proj = Project.load(folder)
+    assert proj.imported_from == folder and proj.path is None
+    assert proj.dataset("d").stored and proj.dataset("d").calibration.start == "2022-05-02"
+    assert not proj.dataset("missing").stored and "missing" in proj.import_warnings[0]
+    np.testing.assert_array_equal(proj.runs[0].pareto_F, rec.pareto_F)
+    saved = proj.save(tmp_path / "new.shproj")
+    back = Project.load(saved)
+    assert back.objectives[0].name == "kge" and len(back.frame("d")) == len(sample_frame)
 
 
 def test_run_record_helpers() -> None:

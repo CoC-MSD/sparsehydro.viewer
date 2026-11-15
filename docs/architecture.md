@@ -26,6 +26,18 @@ sparsehydro_viewer/
   views/                  pages and main window (no sparsehydro imports)
 ```
 
+## Project file
+
+`core/store/` is the project database (SQLite, `*.shproj`). `schema.py` documents the tables and their
+mapping to the water ontology (`water-ontology/schema`, `wsys:` namespace); `store.py` (`ProjectStore`) is
+the typed API; `arrays.py` packs series losslessly (regular time axes are stored as start + step).
+`core/project.py` (`Project`) keeps the setup in memory and writes it into the store on save; the app
+works on an in-memory copy of the file and saves it back with SQLite's backup API. Node edits go through
+the session (`Session.update_node`, `Session.set_attribute`), which emits `nodesChanged`.
+
+`widgets/properties/` is the property editor (after QPropertyModel): `PropertyNode` tree, `PropertyModel`,
+`PropertyDelegate`, `PropertyEditor`, and adapters for option specs and project nodes.
+
 ## Application shell
 
 `views/shell/` holds the parts every page shares:

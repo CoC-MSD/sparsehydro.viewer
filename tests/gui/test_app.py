@@ -208,8 +208,8 @@ def test_calibrate_explore_compare_save_reload(window, qtbot, sample_frame, samp
     assert compare.parallel.s.data.shape[0] == runs[0].n_solutions + runs[1].n_solutions
 
     # Save, reload, identical results.
-    s.save_project(str(tmp_path / "proj"))
-    back = Project.load(tmp_path / "proj")
+    s.save_project(str(tmp_path / "proj.shproj"))
+    back = Project.load(tmp_path / "proj.shproj")
     assert [r.label for r in back.runs] == labels
     np.testing.assert_array_equal(back.runs[1].pareto_F, runs[1].pareto_F)
 

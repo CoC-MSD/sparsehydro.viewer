@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from .. import APP_NAME, __version__, theme
-from ..core.project import Project
+from ..core.project import SUFFIX, Project
 from ..resources import icon
 from ..services import CalibrationService, JobManager, LiveEvaluationService
 from ..session import Session
@@ -271,28 +271,39 @@ class MainWindow(QMainWindow):
     def open_project_dialog(self) -> None:
         if not self._confirm_discard():
             return
-        folder = QFileDialog.getExistingDirectory(self, "Open project folder", self.settings.value("last_dir", ""))
-        if folder:
-            self.open_project(folder, confirm=False)
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Open project", self.settings.value("last_dir", ""),
+            f"SparseHydro project (*{SUFFIX});;Earlier project folder (project.json)")
+        if path:
+            self.open_project(path, confirm=False)
 
-    def open_project(self, folder: str, confirm: bool = True) -> None:
+    def open_project(self, path: str, confirm: bool = True) -> None:
+        """Open a ``.shproj`` file, or import an earlier project folder / its ``project.json``."""
         if confirm and not self._confirm_discard():
             return
-        if not Project.is_project_folder(folder):
-            QMessageBox.warning(self, APP_NAME, f"{folder} is not a project folder (no project.json).")
+        if not Project.is_project_path(path):
+            QMessageBox.warning(self, APP_NAME, f"{path} is not a SparseHydro project.")
             return
         try:
-            project = Project.load(folder)
+            project = Project.load(path)
         except Exception as exc:
-            QMessageBox.critical(self, APP_NAME, f"Could not open {folder}:\n{exc}")
+            QMessageBox.critical(self, APP_NAME, f"Could not open {path}:\n{exc}")
             return
         self.ctx.session.set_project(project)
-        self.settings.setValue("last_dir", str(Path(folder).parent))
-        self._remember(str(Path(folder)))
+        self.settings.setValue("last_dir", str(Path(path).parent))
+        if project.imported_from is not None:
+            note = "\n\nSome datasets could not be read:\n" + "\n".join(project.import_warnings) \
+                if project.import_warnings else ""
+            QMessageBox.information(self, APP_NAME, f"The project in {project.imported_from} uses the earlier folder "
+                                                    f"format. It was imported; use Save to store it as a {SUFFIX} "
+                                                    f"file.{note}")
+            self.ctx.session.set_dirty(True)
+        else:
+            self._remember(str(Path(path)))
         self._update_title()
 
     def save_project(self) -> bool:
-        if self.ctx.session.project.folder is None:
+        if self.ctx.session.project.path is None:
             return self.save_project_as()
         try:
             self.ctx.session.save_project()
@@ -303,21 +314,21 @@ class MainWindow(QMainWindow):
         return True
 
     def save_project_as(self) -> bool:
-        folder = QFileDialog.getExistingDirectory(self, "Choose or create a project folder",
-                                                  self.settings.value("last_dir", ""))
-        if not folder:
+        p = self.ctx.session.project
+        start = str(p.path) if p.path else str(Path(self.settings.value("last_dir", "") or ".") / f"{p.name}{SUFFIX}")
+        path, _ = QFileDialog.getSaveFileName(self, "Save project as", start, f"SparseHydro project (*{SUFFIX})")
+        if not path:
             return False
-        overwriting = Project.is_project_folder(folder) and folder != str(self.ctx.session.project.folder or "")
-        if overwriting and QMessageBox.question(self, APP_NAME, f"{folder} already holds a project. Overwrite it?") \
-                != QMessageBox.StandardButton.Yes:
-            return False
-        self.ctx.session.project.name = Path(folder).name
+        if not path.lower().endswith(SUFFIX):
+            path += SUFFIX
+        p.name = Path(path).stem
         try:
-            self.ctx.session.save_project(folder)
+            self.ctx.session.save_project(path)
         except Exception as exc:
             QMessageBox.critical(self, APP_NAME, f"Save failed:\n{exc}")
             return False
-        self._remember(folder)
+        self.settings.setValue("last_dir", str(Path(path).parent))
+        self._remember(path)
         self._update_title()
         return True
 
@@ -401,7 +412,7 @@ class MainWindow(QMainWindow):
         s = self.ctx.session
         flags = s.calibrate_flags()
         k = sum(flags.values())
-        project = s.project.name if s.project.folder else "Untitled"
+        project = s.project.name if s.project.path else "Untitled"
         parts = [project, s.dataset_name or "no dataset",
                  f"{s.model_spec.display_label} ({len(flags)} parameters, {k} calibrated)"]
         if hasattr(self, "toolbar"):
@@ -412,7 +423,7 @@ class MainWindow(QMainWindow):
 
     def _update_title(self) -> None:
         p = self.ctx.session.project
-        name = p.name if p.folder else "Untitled"
+        name = p.name if p.path else "Untitled"
         self.setWindowTitle(f"{name}{' *' if self.ctx.session.dirty else ''} - {APP_NAME}")
 
     def show_explore(self, run_id: str) -> None:

@@ -14,7 +14,7 @@ import pandas as pd
 from PySide6.QtCore import QObject, Signal
 
 from .core.catalog import CATALOG, ModelSpec, ParameterInfo
-from .core.data import DatasetSpec, Period, load_dataset
+from .core.data import DatasetSpec, Period
 from .core.objectives import ObjectiveSpec
 from .core.project import Project
 from .core.runs import RunRecord
@@ -23,6 +23,8 @@ from .core.solvers import SolverSpec
 
 class Session(QObject):
     projectChanged = Signal()
+    projectSaved = Signal()
+    nodesChanged = Signal(list)  # iris of sites/sensors/zones whose fields or attributes changed
     datasetChanged = Signal()
     periodsChanged = Signal()  # calibration/validation period of the current dataset
     modelChanged = Signal()
@@ -70,10 +72,12 @@ class Session(QObject):
         self.objectivesChanged.emit()
         self.runsChanged.emit()
 
-    def save_project(self, folder: str | None = None) -> None:
+    def save_project(self, path: str | None = None) -> None:
+        """Save to *path* (a ``.shproj`` file; default: the file the project was opened from)."""
         self.project.ui_state["model"] = self.model_spec.with_values(self.values).to_dict()
-        self.project.save(folder)
+        self.project.save(path)
         self.set_dirty(False)
+        self.projectSaved.emit()
 
     @property
     def dirty(self) -> bool:
@@ -100,11 +104,12 @@ class Session(QObject):
         if name is None:
             return None
         if name not in self._frames:
-            self._frames[name] = load_dataset(self.project.dataset(name))
+            self._frames[name] = self.project.frame(name)
         return self._frames[name]
 
     def add_dataset(self, spec: DatasetSpec, frame: pd.DataFrame) -> None:
-        self.project.upsert_dataset(spec)
+        """Import *frame* into the project database (site, sensors, series) and make it the current dataset."""
+        self.project.add_dataset(spec, frame)
         self._frames[spec.name] = frame
         self.dataset_name = spec.name
         self.set_dirty()
@@ -114,6 +119,29 @@ class Session(QObject):
         if name != self.dataset_name:
             self.dataset_name = name
             self.datasetChanged.emit()
+
+    # ------------------------------------------------------------------ nodes (project database)
+
+    @property
+    def store(self):
+        return self.project.store
+
+    def update_node(self, iri: str, **fields) -> None:
+        """Change a node's own fields (label, description, geometry...) and notify views."""
+        self.project.store.update_node(iri, **fields)
+        self.set_dirty()
+        self.nodesChanged.emit([iri])
+
+    def set_attribute(self, iri: str, key: str, value) -> None:
+        """Set (``None`` clears) an attribute of a node and notify views."""
+        self.project.store.set_attribute(iri, key, value)
+        self.set_dirty()
+        self.nodesChanged.emit([iri])
+
+    def define_attribute(self, definition) -> None:
+        self.project.store.define_attribute(definition)
+        self.set_dirty()
+        self.nodesChanged.emit([])
 
     def set_periods(self, calibration: Period, validation: Period) -> None:
         ds = self.dataset

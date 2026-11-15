@@ -64,6 +64,13 @@ class DatasetSpec:
     :ivar clip_negative_flow: Set negative flows to zero.
     :ivar calibration: Calibration period.
     :ivar validation: Validation period (may be open, meaning "not used").
+    :ivar site_iri: Monitoring site the dataset belongs to in the project database.
+    :ivar rain_stream: Datastream holding the rainfall series (project database).
+    :ivar flow_stream: Datastream holding the observed flow series.
+    :ivar temperature_stream: Datastream holding air temperature, if any.
+
+    The source fields (``kind``, ``path``, ``columns``...) record where the data
+    came from; once imported the series are read from the project database.
     """
 
     name: str
@@ -75,6 +82,15 @@ class DatasetSpec:
     clip_negative_flow: bool = True
     calibration: Period = field(default_factory=Period)
     validation: Period = field(default_factory=Period)
+    site_iri: str | None = None
+    rain_stream: str | None = None
+    flow_stream: str | None = None
+    temperature_stream: str | None = None
+
+    @property
+    def stored(self) -> bool:
+        """``True`` when the series are in the project database."""
+        return bool(self.rain_stream and self.flow_stream)
 
     def to_dict(self, base: Path | None = None) -> dict[str, Any]:
         def rel(p: str) -> str:
@@ -90,6 +106,8 @@ class DatasetSpec:
             "columns": dict(self.columns), "flow_units": self.flow_units,
             "clip_negative_flow": self.clip_negative_flow,
             "calibration": self.calibration.to_dict(), "validation": self.validation.to_dict(),
+            "site_iri": self.site_iri, "rain_stream": self.rain_stream, "flow_stream": self.flow_stream,
+            "temperature_stream": self.temperature_stream,
         }
 
     @classmethod
@@ -105,6 +123,8 @@ class DatasetSpec:
             columns=dict(d.get("columns", {c: c for c in STANDARD_COLUMNS})),
             flow_units=d.get("flow_units", "cfs"), clip_negative_flow=d.get("clip_negative_flow", True),
             calibration=Period.from_dict(d.get("calibration")), validation=Period.from_dict(d.get("validation")),
+            site_iri=d.get("site_iri"), rain_stream=d.get("rain_stream"), flow_stream=d.get("flow_stream"),
+            temperature_stream=d.get("temperature_stream"),
         )
 
 
@@ -158,6 +178,8 @@ def load_dataset(spec: DatasetSpec) -> pd.DataFrame:
     df["datetime"] = pd.to_datetime(df["datetime"])
     if getattr(df["datetime"].dt, "tz", None) is not None:
         df["datetime"] = df["datetime"].dt.tz_localize(None)
+    # One resolution everywhere (pandas 3 parses text at microseconds; the project database stores ns).
+    df["datetime"] = df["datetime"].astype("datetime64[ns]")
     for c in df.columns:
         if c != "datetime":
             df[c] = pd.to_numeric(df[c], errors="coerce").astype(float)

@@ -8,6 +8,7 @@ the project file in ``runs/<id>.npz``.
 
 from __future__ import annotations
 
+import io
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -122,8 +123,15 @@ class RunRecord:
         np.savez_compressed(path, pareto_X=self.pareto_X, pareto_F=self.pareto_F,
                             hist_gen=gens, hist_evals=evals, hist_sizes=sizes, hist_F=stacked)
 
+    def arrays_blob(self) -> bytes:
+        """Pareto set and history as one compressed blob (project database)."""
+        buf = io.BytesIO()
+        self.save_arrays(buf)  # type: ignore[arg-type]
+        return buf.getvalue()
+
     @classmethod
-    def from_meta(cls, d: dict[str, Any], arrays: Path | None = None) -> RunRecord:
+    def from_meta(cls, d: dict[str, Any], arrays: Path | bytes | None = None) -> RunRecord:
+        """Rebuild a run from its metadata and arrays (an ``.npz`` path or a blob from :meth:`arrays_blob`)."""
         rec = cls(
             id=d["id"], label=d.get("label", d["id"]), dataset=d.get("dataset", ""),
             model=ModelSpec.from_dict(d["model"]),
@@ -135,8 +143,9 @@ class RunRecord:
             fixed_values={k: float(v) for k, v in d.get("fixed_values", {}).items()},
             n_params_total=int(d.get("n_params_total", 0)),
         )
-        if arrays is not None and arrays.exists():
-            with np.load(arrays) as z:
+        source = io.BytesIO(arrays) if isinstance(arrays, bytes) else arrays
+        if source is not None and (isinstance(source, io.BytesIO) or source.exists()):
+            with np.load(source) as z:
                 rec.pareto_X, rec.pareto_F = z["pareto_X"], z["pareto_F"]
                 offs = np.concatenate([[0], np.cumsum(z["hist_sizes"])])
                 rec.history = [(int(g), int(e), z["hist_F"][offs[i]:offs[i + 1]])

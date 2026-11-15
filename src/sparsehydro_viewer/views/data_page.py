@@ -41,6 +41,7 @@ from ..widgets.chart_actions import PeriodActions
 from ..widgets.timeseries_plot import PERIOD_COLORS
 from .common import page_header
 from .context import AppContext
+from .node_properties import NodePropertiesPanel
 from .shell.page import Page
 
 _COLUMN_ROLES = (("datetime", "Date/time"), ("rain", "Rain (depth per step)"),
@@ -184,7 +185,11 @@ class DataPage(Page):
         ll.addWidget(src)
         ll.addWidget(per)
         ll.addWidget(self.summary)
-        ll.addStretch(1)
+        self.site_props = NodePropertiesPanel(ctx)
+        site_box = QGroupBox("Site")
+        sl = QVBoxLayout(site_box)
+        sl.addWidget(self.site_props)
+        ll.addWidget(site_box, 1)
         left.setMinimumWidth(360)
         left.setMaximumWidth(480)
 
@@ -331,6 +336,8 @@ class DataPage(Page):
 
     def refresh(self) -> None:
         s = self.ctx.session
+        ds = s.dataset
+        self.site_props.show_nodes([ds.site_iri] if ds is not None and ds.site_iri else [])
         self.datasets.blockSignals(True)
         self.datasets.clear()
         self.datasets.addItems([d.name for d in s.project.datasets])

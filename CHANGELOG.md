@@ -11,6 +11,14 @@ All notable changes are documented here. The format follows
 - Application shell: one standard toolbar on every page (project, Run/Stop for the page's command, chart
   navigation bound to the page's active chart, page-specific actions) and a standard status bar (message,
   context, cursor readout, activity with a global progress bar). SVG icon set, tinted to the theme.
+- Project file: one SQLite file (`*.shproj`) holding sites, sensors, zones, edges, attributes, WKT locations
+  and the time series themselves (compressed arrays), with tables named after the water ontology
+  (`MonitoringSite`, `Sensor`, `Zone`, `Edge`, `Datastream`, `Observation`, `AttributeMeasurement`), plus
+  datasets, models, runs and settings. The app edits an in-memory copy and Save writes it atomically.
+  Projects saved as folders by earlier versions are imported on open.
+- Property editor modelled on QPropertyModel: typed editors with units, limits, choices, descriptions,
+  reset to default and multi-object editing; used for site properties and custom attributes
+  ("Add attribute...") on the Data page.
 - Process builder (Model page): grow a model one process at a time - rainfall losses, a list of unit
   hydrographs, other flow components - with parameter values carried across design changes; new RTK
   triangles start progressively slower. The component-tree editor moves to an Advanced tab.
