@@ -11,6 +11,9 @@ All notable changes are documented here. The format follows
 - Application shell: one standard toolbar on every page (project, Run/Stop for the page's command, chart
   navigation bound to the page's active chart, page-specific actions) and a standard status bar (message,
   context, cursor readout, activity with a global progress bar). SVG icon set, tinted to the theme.
+- Process builder (Model page): grow a model one process at a time - rainfall losses, a list of unit
+  hydrographs, other flow components - with parameter values carried across design changes; new RTK
+  triangles start progressively slower. The component-tree editor moves to an Advanced tab.
 - Progress reporting: per-run progress bars in Calibrate (generations or evaluations), event detection and
   fitting report event i/N and can be stopped between events.
 

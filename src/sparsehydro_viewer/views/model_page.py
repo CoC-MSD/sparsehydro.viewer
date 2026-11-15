@@ -1,5 +1,6 @@
-"""Model workspace: compose the working model from components, preview its unit
-hydrographs, and see every parameter change in the hydrograph and objectives."""
+"""Model workspace: build the working model from processes (or, in the Advanced tab,
+from components), preview its unit hydrographs, and see every parameter change in
+the hydrograph and objectives."""
 
 from __future__ import annotations
 
@@ -12,8 +13,10 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QScrollArea,
     QSplitter,
     QTableWidget,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -24,6 +27,7 @@ from ..core.data import epoch_seconds
 from ..services import LiveResult
 from ..widgets import TimeseriesPlot, UHPreview
 from ..widgets.model_composer import ModelComposer, apply_renames
+from ..widgets.process_builder import ProcessBuilder
 from .common import num_item, objective_labels, page_header, text_item
 from .context import AppContext
 from .shell.page import Page
@@ -38,20 +42,34 @@ class ModelPage(Page):
         super().__init__(ctx)
         s = ctx.session
 
+        # Processes (default): grow the model one process at a time. Advanced: the raw component tree.
+        self.builder = ProcessBuilder()
+        self.builder.changed.connect(self._structure_edited)
         self.composer = ModelComposer()
         self.composer.changed.connect(self._structure_edited)
         self.name = QLineEdit()
         self.name.setPlaceholderText("model name (optional)")
         self.name.editingFinished.connect(lambda: s.set_model_label(self.name.text().strip()))
         self.counts = QLabel()
-        box = QGroupBox("Model structure")
-        bl = QVBoxLayout(box)
-        hint = QLabel("Select a component to change its type or options. Add terms (e.g. a sanitary pattern) "
-                      "or unit hydrographs; every edit rebuilds the working model and updates all views.")
+        builder_scroll = QScrollArea()
+        builder_scroll.setWidgetResizable(True)
+        builder_scroll.setFrameShape(QScrollArea.Shape.NoFrame)
+        builder_scroll.setWidget(self.builder)
+        advanced = QWidget()
+        al = QVBoxLayout(advanced)
+        al.setContentsMargins(0, 4, 0, 0)
+        hint = QLabel("The component tree behind the model. Use it for structures the Processes tab does not "
+                      "cover, e.g. several RDII terms or nested sums.")
         hint.setObjectName("hint")
         hint.setWordWrap(True)
-        bl.addWidget(hint)
-        bl.addWidget(self.composer, 1)
+        al.addWidget(hint)
+        al.addWidget(self.composer, 1)
+        self.structure_tabs = QTabWidget()
+        self.structure_tabs.addTab(builder_scroll, "Processes")
+        self.structure_tabs.addTab(advanced, "Advanced")
+        box = QGroupBox("Model")
+        bl = QVBoxLayout(box)
+        bl.addWidget(self.structure_tabs, 1)
         row = QHBoxLayout()
         row.addWidget(self.name, 1)
         row.addWidget(self.counts)
@@ -105,9 +123,10 @@ class ModelPage(Page):
         split.addWidget(right)
         split.setStretchFactor(1, 1)
         lay = QVBoxLayout(self)
-        lay.addWidget(page_header("Model", "Compose the working model from components, then move its sliders "
-                                           "(Working model dock, right): the hydrograph, unit hydrographs and "
-                                           "objectives update as you drag."))
+        lay.addWidget(page_header("Model", "Build the working model by adding processes (rainfall losses, unit "
+                                           "hydrographs, other flow components), then move its sliders (Working "
+                                           "model panel, right): the hydrograph, unit hydrographs and objectives "
+                                           "update as you drag."))
         lay.addWidget(split, 1)
 
         self._pins = 0
@@ -139,6 +158,7 @@ class ModelPage(Page):
         spec = self.ctx.session.model_spec
         if spec.root.to_dict() != self.composer.root.to_dict():
             self.composer.set_root(spec.root)
+        self.builder.set_root(spec.root)
         self.name.setText(spec.label)
         self.name.setPlaceholderText(spec.display_label if not spec.label else "model name (optional)")
         self._update_counts()

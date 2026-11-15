@@ -154,6 +154,9 @@ UH_KEYS: tuple[str, ...] = (
 )
 ABSTRACTION_KEYS: tuple[str, ...] = ("initial-abstraction", "tank-constant", "tank-linear", "tank-sqrt")
 
+#: Starting (T [h], K) of the 1st, 2nd, 3rd... RTK triangle in an RDII component.
+RTK_START: tuple[tuple[float, float], ...] = ((1.0, 1.5), (6.0, 2.0), (24.0, 3.0), (72.0, 3.0), (168.0, 3.0))
+
 
 def _build_uh(key: str) -> Callable[[dict[str, Any], dict[str, Any]], Any]:
     return lambda _o, _c: _uh_classes()[key][1]()
@@ -206,7 +209,8 @@ def _build_sum(_o: dict[str, Any], c: dict[str, Any]) -> Any:
 def _types() -> dict[str, ComponentType]:
     out: dict[str, ComponentType] = {}
     for key, (label, _cls, doc) in _uh_classes().items():
-        out[key] = ComponentType(key, label, "uh", doc, build=_build_uh(key), also_flow=True)
+        # The RTK triangle routes rainfall *excess* (it reads p_excess_mm), so it cannot stand alone as a flow.
+        out[key] = ComponentType(key, label, "uh", doc, build=_build_uh(key), also_flow=key != "rtk-triangle")
     out["initial-abstraction"] = ComponentType(
         "initial-abstraction", "Initial abstraction", "abstraction",
         "Temperature-dependent initial abstraction with recovery and depletion.",
@@ -303,11 +307,12 @@ def change_type(spec: ComponentSpec, type_key: str) -> ComponentSpec:
 
 
 def default_tree() -> ComponentSpec:
-    """Starting point for a new project: one RDII term inside a sum, ready for more terms."""
-    root = new_component("sum")
-    root.slots["terms"][0].slots["uhs"] = [new_component("rtk-triangle"), new_component("gamma-uh")]
-    assign_aliases(root)
-    return root
+    """Starting point for a new project: initial abstraction routed through one RTK triangle.
+
+    This is the process builder's default design (:class:`~.processes.ProcessDesign`), so a new model
+    can be grown from it one process at a time.
+    """
+    return new_component("rdii")
 
 
 def assign_aliases(root: ComponentSpec) -> None:
@@ -452,6 +457,12 @@ def build(spec: ComponentSpec, *, _prefix: str = "", _label: str = "") -> Built:
             # The library seeds R_i from the UH's own amplitude, which for A-type UHs (A=100) breaks the
             # R_i <= 1 bound; start every component with an equal share instead.
             out.defaults.append((f"{_prefix}R_{i}", round(1.0 / n, 6) if amp != "R" else None, None))
+            # Successive RTK triangles start progressively slower (fast inflow -> slow infiltration), so adding
+            # a triangle adds a distinct response instead of a copy of the first one.
+            if u_spec.type == "rtk-triangle":
+                k = sum(1 for s in spec.slots["uhs"][:i] if s.type == "rtk-triangle") - 1
+                t, kk = RTK_START[min(k, len(RTK_START) - 1)]
+                out.defaults += [(f"{_prefix}uh{i}_T", t, None), (f"{_prefix}uh{i}_K", kk, None)]
         return out
 
     if spec.type == "excess-uh":

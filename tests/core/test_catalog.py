@@ -90,11 +90,11 @@ def test_assign_aliases_unique() -> None:
 
 
 def test_default_tree_and_spec_round_trip() -> None:
-    spec = ModelSpec(default_tree(), {"wet_R_1": ParameterState(value=0.2, calibrate=False)}, "mine")
+    spec = ModelSpec(default_tree(), {"R_1": ParameterState(value=0.2, calibrate=False)}, "mine")
     back = ModelSpec.from_dict(spec.to_dict())
     assert back.to_dict() == spec.to_dict()
     assert back.structure_key == spec.structure_key
-    assert CATALOG.instantiate(back).read_flat_parameter("wet_R_1") == pytest.approx(0.2)
+    assert CATALOG.instantiate(back).read_flat_parameter("R_1") == pytest.approx(0.2)
 
 
 def test_legacy_specs_convert() -> None:

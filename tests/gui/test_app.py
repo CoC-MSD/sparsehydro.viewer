@@ -99,6 +99,40 @@ def test_composer_edits_cascade_and_keep_values(window, qtbot, sample_frame, sam
     assert "san (Sanitary pattern)" in window.params.context.text() or "sanitary" in window.params.context.text()
 
 
+def test_process_builder_grows_a_model(window, qtbot, sample_frame, sample_csv) -> None:
+    """Start from IA -> one RTK triangle, add a gamma UH, a sanitary pattern, switch losses; values follow."""
+    s = window.ctx.session
+    _load(window, qtbot, sample_frame, sample_csv)
+    builder = window.pages[1].builder
+    assert builder.design.routing == ["rtk-triangle"] and builder.design.losses == "initial-abstraction"
+    with qtbot.waitSignal(window.ctx.controller.result, timeout=15000):
+        s.set_values({"uh1_T": 4.0, "area_acres": 30.0})
+
+    builder._add("gamma-uh")
+    assert "uh2_tt" in window.params.rows and s.values["uh1_T"] == pytest.approx(4.0)
+    # two hydrographs + their combined curve once the rebuilt model has been evaluated
+    qtbot.waitUntil(lambda: len(window.ctx.controller.last.kernels) == 3, timeout=15000)
+
+    with qtbot.waitSignal(window.ctx.controller.result, timeout=15000):
+        builder.sanitary.setChecked(True)
+    assert s.values["wet_uh1_T"] == pytest.approx(4.0) and s.values["wet_area_acres"] == pytest.approx(30.0)
+    assert "san_baseline" in window.params.rows
+
+    # RTK triangles route rainfall excess: "None" losses is refused with a message and nothing changes
+    before = s.model_spec.structure_key
+    builder.losses.setCurrentIndex(builder.losses.findData(None))
+    builder._losses_changed()
+    assert "losses" in builder.message.text() and s.model_spec.structure_key == before
+
+    with qtbot.waitSignal(window.ctx.controller.result, timeout=15000):
+        builder._remove(0)
+    assert builder.design.routing == ["gamma-uh"] and "wet_uh2_tt" not in window.params.rows
+    with qtbot.waitSignal(window.ctx.controller.result, timeout=15000):
+        builder.losses.setCurrentIndex(builder.losses.findData(None))
+        builder._losses_changed()
+    assert builder.design.losses is None and "wet_A" in window.params.rows
+
+
 def test_periods_from_chart_cascade(window, qtbot, sample_frame, sample_csv) -> None:
     s = window.ctx.session
     _load(window, qtbot, sample_frame, sample_csv)
