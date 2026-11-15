@@ -168,7 +168,7 @@ class MainWindow(QMainWindow):
         self._build_actions()
         self._build_menus()
         self.toolbar = MainToolBar(self, [self.new_action, self.open_action, self.save_action],
-                                   [self.param_toggle, self.activity_toggle])
+                                   [self.param_toggle, self.activity_toggle], session=self.ctx.session)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar)
         for sig in (jobs.jobAdded, jobs.jobChanged, calibration.started, calibration.finished):
             sig.connect(lambda *_: self.toolbar.refresh())
@@ -300,6 +300,12 @@ class MainWindow(QMainWindow):
             self.ctx.session.set_dirty(True)
         else:
             self._remember(str(Path(path)))
+            if project.migrated:
+                problems = f" {' '.join(project.import_warnings)}" if project.import_warnings else ""
+                self.statusBar().showMessage(
+                    "Unit hydrograph parameters were converted from time steps to hours for this version of "
+                    f"sparsehydro; Save to keep the conversion.{problems}", 20000)
+                self.ctx.session.set_dirty(True)
         self._update_title()
 
     def save_project(self) -> bool:

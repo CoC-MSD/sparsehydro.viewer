@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 from .. import theme
 from ..core.catalog import UH_KEYS, uh_label
 from ..core.data import epoch_seconds
-from ..core.events import EVENT_OPTIONS, EventAnalysis, EventOverrides, run_event_analysis
+from ..core.events import EventAnalysis, EventOverrides, event_options, run_event_analysis
 from ..core.uh import kernel_curves
 from ..widgets import OptionForm, TimeseriesPlot
 from .common import num_item, page_header, text_item
@@ -54,7 +54,7 @@ class EventsPage(Page):
         s = ctx.session
         uh_labels = {k: uh_label(k) for k in UH_KEYS}
         self.options = OptionForm(choice_labels=uh_labels)
-        self.options.set_specs(EVENT_OPTIONS)
+        self.options.set_specs(event_options())
         run = QPushButton("Detect events and fit")
         run.setObjectName("primary")
         run.clicked.connect(self.run_analysis)

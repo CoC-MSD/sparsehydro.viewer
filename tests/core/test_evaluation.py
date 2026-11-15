@@ -97,7 +97,7 @@ def test_kernel_curves_unit_area(kind: str, n_curves: int) -> None:
 def test_kernel_curves_follow_parent_parameters() -> None:
     built = CATALOG.build(spec_for("abstraction-uh", {"uh": "nash-uh"}))
     fast = kernel_curves(built, 1 / 12)[0].centroid
-    built.model.apply_flat_parameter("uh_k", 4 * built.model.read_flat_parameter("uh_k"))
+    built.model.apply_flat_parameter("uh_K", 4 * built.model.read_flat_parameter("uh_K"))
     assert kernel_curves(built, 1 / 12)[0].centroid > 2 * fast
 
 

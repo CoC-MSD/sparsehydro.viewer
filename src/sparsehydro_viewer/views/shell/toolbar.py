@@ -2,7 +2,7 @@
 
 Layout, identical on every page::
 
-    [New Open Save] | [Run <page command>] [Stop] | [Pan Zoom Fit AutoY Export] | [page actions...] | [docks]
+    [New Open Save] | [Dataset ▾] | [Run <page command>] [Stop] | [Pan Zoom Fit AutoY Export] | [page actions...] | [docks]
 
 The Run and Stop buttons call the current page; the chart buttons act on the
 page's active chart; the page actions are swapped when the page changes.
@@ -20,7 +20,8 @@ from .page import Page
 
 
 class MainToolBar(QToolBar):
-    def __init__(self, parent: QWidget, project_actions: list[QAction], view_actions: list[QAction]) -> None:
+    def __init__(self, parent: QWidget, project_actions: list[QAction], view_actions: list[QAction],
+                 session=None) -> None:
         super().__init__("Main toolbar", parent)
         self.setObjectName("mainToolBar")
         self.setMovable(False)
@@ -31,6 +32,13 @@ class MainToolBar(QToolBar):
         for a in project_actions:
             self.addAction(a)
         self.addSeparator()
+        self.dataset = None
+        if session is not None:  # the analysis dataset stays in view on every page
+            from .dataset_selector import DatasetSelector
+
+            self.dataset = DatasetSelector(session, self)
+            self.addWidget(self.dataset)
+            self.addSeparator()
         self.run_action = QAction(icon("run", "#1a7f37"), "Run", self)
         self.run_action.setShortcut(QKeySequence("F5"))
         self.run_action.triggered.connect(self._run)

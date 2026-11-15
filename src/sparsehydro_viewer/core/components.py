@@ -131,48 +131,126 @@ class ComponentType:
         return next(s for s in self.slots if s.name == name)
 
 
+#: Labels and one-line descriptions for the unit hydrographs the viewer knows; others registered in
+#: sparsehydro appear with their class docstring. All times are in hours.
+_UH_LABELS: dict[str, tuple[str, str, str]] = {
+    "rtk-triangle": ("RTK triangle", "RTK", "SWMM RTK triangle: fraction R, time to peak T [h], recession ratio K."),
+    "gamma-uh": ("Gamma UH", "gamma", "Gamma distribution: shape alpha, scale theta [h]."),
+    "nash-uh": ("Nash cascade UH", "Nash", "n linear reservoirs with storage constant K [h]."),
+    "triangle-uh": ("Triangle UH", "triangle", "Linear rise to Tp, linear fall to Tb [h]."),
+    "rectangle-uh": ("Rectangle UH", "rectangle", "Uniform pulse of duration Tr [h]."),
+    "decay-uh": ("Exponential decay UH", "decay", "Single linear reservoir with time constant K [h]."),
+    "gamma-delay-uh": ("Delayed gamma UH", "delayed gamma", "Gamma shape shifted by a delay td [h]."),
+    "peak-tail-uh": ("Peak + tail UH", "peak+tail", "Triangle peak blended with a gamma tail (tail fraction w)."),
+    "mixture-uh": ("Mixture UH", "mixture", "Weighted blend of two gamma shapes (fast and slow)."),
+    "clark-uh": ("Clark UH", "Clark", "Clark: time of concentration Tc and storage Rs [h]."),
+    "modclark-uh": ("ModClark UH", "ModClark", "Modified Clark with a distributed travel-time area curve."),
+    "scs-uh": ("SCS UH", "SCS", "NRCS dimensionless UH: time to peak Tp [h], peak rate factor PRF."),
+    "snyder-uh": ("Snyder UH", "Snyder", "Snyder synthetic UH: lag tL [h], peaking coefficient Cp."),
+    "weibull-uh": ("Weibull UH", "Weibull", "Weibull distribution: shape k, scale lam [h]."),
+    "lognormal-uh": ("Lognormal UH", "lognormal", "Lognormal distribution: mu [ln h], sigma."),
+    "gengamma-uh": ("Generalised gamma UH", "gen. gamma", "Generalised gamma: shapes a, c, scale [h]."),
+}
+
+
 def _uh_classes() -> dict[str, tuple[str, Any, str]]:
-    from sparsehydro.models import unithydrograph as U
-    from sparsehydro.models.rdii.rtk_triangle import RTKTriangle
+    """Unit hydrographs registered in sparsehydro (RTK triangle first, the viewer's known ones next)."""
+    from sparsehydro.models.base import IUnitHydroComponent
+    from sparsehydro.registry import registry
 
-    return {
-        "gamma-uh": ("Gamma UH", U.GammaUH, "Two-parameter gamma shape (tt, tp in steps)."),
-        "nash-uh": ("Nash cascade UH", U.NashUH, "n linear reservoirs with storage constant k (steps)."),
-        "triangle-uh": ("Triangle UH", U.TriangleUH, "Linear rise to tp, linear fall to tt (steps)."),
-        "rectangle-uh": ("Rectangle UH", U.RectangleUH, "Uniform pulse of duration tr (steps)."),
-        "decay-uh": ("Exponential decay UH", U.DecayUH, "Single linear reservoir, alpha^t."),
-        "gamma-delay-uh": ("Delayed gamma UH", U.GammaDelayUH, "Gamma shape shifted by td (steps)."),
-        "peak-tail-uh": ("Peak + tail UH", U.PeakTailUH, "Triangle peak mixed with a gamma tail (weight w)."),
-        "rtk-triangle": ("RTK triangle", RTKTriangle, "SWMM RTK triangle: fraction R, time to peak T [h], "
-                                                      "recession ratio K."),
-    }
+    out: dict[str, tuple[str, Any, str]] = {}
+    found = [n for n in registry.names()
+             if isinstance(registry.get(n), type) and issubclass(registry.get(n), IUnitHydroComponent)]
+    for key in [k for k in _UH_LABELS if k in found] + sorted(k for k in found if k not in _UH_LABELS):
+        cls = registry.get(key)
+        label, _short_name, doc = _UH_LABELS.get(key, (key.replace("-", " "), key, _first_line(cls)))
+        out[key] = (label, cls, doc)
+    return out
 
 
-UH_KEYS: tuple[str, ...] = (
-    "gamma-uh", "nash-uh", "triangle-uh", "rectangle-uh", "decay-uh", "gamma-delay-uh", "peak-tail-uh",
-    "rtk-triangle",
-)
-ABSTRACTION_KEYS: tuple[str, ...] = ("initial-abstraction", "tank-constant", "tank-linear", "tank-sqrt")
+def _first_line(obj: Any) -> str:
+    doc = (getattr(obj, "__doc__", None) or "").strip()
+    return doc.splitlines()[0] if doc else ""
+
+
+#: Labels for the abstractions (losses) the viewer knows; others registered in sparsehydro are discovered.
+_ABSTRACTION_LABELS: dict[str, tuple[str, str]] = {
+    "initial-abstraction": ("Initial abstraction",
+                            "Temperature-dependent initial abstraction with recovery and depletion."),
+    "tank-constant": ("Tank, constant drain", "Abstraction store that fills with rain and drains between storms."),
+    "tank-linear": ("Tank, linear drain", "Abstraction store whose drain rate grows with its content."),
+    "tank-sqrt": ("Tank, square-root drain", "Abstraction store draining with the square root of its content."),
+}
+
+#: Constructor switches with nicer labels; other bool/int/str switches are generated from signatures.
+_OPTION_HINTS: dict[str, OptionSpec] = {
+    "snow": OptionSpec("snow", "bool", False, label="Degree-day snow",
+                       doc="Store precipitation as snow below a threshold temperature (needs temperature_c)."),
+    "n_substeps": OptionSpec("n_substeps", "int", 5, label="Sub-steps", minimum=1, maximum=100),
+}
+#: Constructor arguments that are wiring or units, not modelling choices.
+_NOT_OPTIONS = frozenset({"units", "output_name", "source_column"})
+
+
+def structural_options(cls: Any) -> tuple[OptionSpec, ...]:
+    """Modelling switches of a registered class: its bool/int/str keyword arguments.
+
+    Float arguments are starting values of parameters the user edits with the sliders, so they are not
+    repeated as options; units, column names and output names are wiring the viewer sets itself.
+    """
+    from .options import signature_options
+
+    opts, _required = signature_options(cls, _NOT_OPTIONS, _OPTION_HINTS)
+    return tuple(o for o in opts if o.kind != "float" and not o.name.endswith("_col"))
+
+
+def _probe(cls: Any) -> Any | None:
+    """An initialised default instance, or ``None`` when the class cannot be built without arguments."""
+    try:
+        m = cls()
+        m.initialize()
+        return m
+    except Exception:  # noqa: BLE001 - classes that need configuration are simply not offered
+        return None
+
+
+def _abstraction_classes() -> dict[str, tuple[str, Any, str]]:
+    """Registered models that turn rainfall into excess on their own (no bound inputs, ``p_excess_in`` out)."""
+    from sparsehydro.models.base import IUnitHydroComponent
+    from sparsehydro.models.composite import CompositeModel
+    from sparsehydro.registry import registry
+
+    found = []
+    for name in registry.names():
+        cls = registry.get(name)
+        if not isinstance(cls, type) or issubclass(cls, (IUnitHydroComponent, CompositeModel)):
+            continue
+        m = _probe(cls)
+        primary = next((f for f in (m.output_field_names if m is not None else []) if f != "datetime"), None)
+        if m is not None and not m.input_field_names and primary == "p_excess_in":
+            found.append(name)
+    out: dict[str, tuple[str, Any, str]] = {}
+    for key in [k for k in _ABSTRACTION_LABELS if k in found] + sorted(k for k in found if k not in _ABSTRACTION_LABELS):
+        label, doc = _ABSTRACTION_LABELS.get(key, (key.replace("-", " "), _first_line(registry.get(key))))
+        out[key] = (label, registry.get(key), doc)
+    return out
+
+
+# Live lists: :func:`refresh` updates them in place when extensions add components.
+UH_KEYS: list[str] = []
+ABSTRACTION_KEYS: list[str] = []
+#: Routing components that read rainfall *excess* (not ``rain``) and so need a losses process.
+NEEDS_EXCESS: set[str] = set()
 
 #: Starting (T [h], K) of the 1st, 2nd, 3rd... RTK triangle in an RDII component.
 RTK_START: tuple[tuple[float, float], ...] = ((1.0, 1.5), (6.0, 2.0), (24.0, 3.0), (72.0, 3.0), (168.0, 3.0))
 
 
-def _build_uh(key: str) -> Callable[[dict[str, Any], dict[str, Any]], Any]:
-    return lambda _o, _c: _uh_classes()[key][1]()
-
-
-def _build_ia(o: dict[str, Any], _c: dict[str, Any]) -> Any:
-    from sparsehydro.models.rdii.initial_abstraction import IAModel
-
-    return IAModel(snow=bool(o["snow"]))
-
-
-def _build_tank(key: str) -> Callable[[dict[str, Any], dict[str, Any]], Any]:
+def _build_registered(key: str) -> Callable[[dict[str, Any], dict[str, Any]], Any]:
     def build(o: dict[str, Any], _c: dict[str, Any]) -> Any:
         from sparsehydro.registry import registry
 
-        return registry.create(key, n_substeps=int(o["n_substeps"]))
+        return registry.create(key, **o)
 
     return build
 
@@ -208,21 +286,25 @@ def _build_sum(_o: dict[str, Any], c: dict[str, Any]) -> Any:
 
 def _types() -> dict[str, ComponentType]:
     out: dict[str, ComponentType] = {}
-    for key, (label, _cls, doc) in _uh_classes().items():
-        # The RTK triangle routes rainfall *excess* (it reads p_excess_mm), so it cannot stand alone as a flow.
-        out[key] = ComponentType(key, label, "uh", doc, build=_build_uh(key), also_flow=key != "rtk-triangle")
-    out["initial-abstraction"] = ComponentType(
-        "initial-abstraction", "Initial abstraction", "abstraction",
-        "Temperature-dependent initial abstraction with recovery and depletion.",
-        options=(OptionSpec("snow", "bool", False, label="Degree-day snow",
-                            doc="Store precipitation as snow below a threshold temperature (needs temperature_c)."),),
-        build=_build_ia)
-    for key, label in (("tank-constant", "Tank, constant drain"), ("tank-linear", "Tank, linear drain"),
-                       ("tank-sqrt", "Tank, square-root drain")):
-        out[key] = ComponentType(
-            key, label, "abstraction", "Abstraction store that fills with rain and drains between storms.",
-            options=(OptionSpec("n_substeps", "int", 5, label="Sub-steps", minimum=1, maximum=100),),
-            build=_build_tank(key))
+    UH_KEYS[:] = []
+    NEEDS_EXCESS.clear()
+    for key, (label, cls, doc) in _uh_classes().items():
+        m = _probe(cls)
+        # A UH that reads plain rain can also stand alone as a flow; one that reads excess (e.g. the RTK
+        # triangle, which reads p_excess_mm) needs a losses process in front of it.
+        reads_rain = m is not None and "rain" in m.input_field_names
+        if m is None:
+            continue
+        UH_KEYS.append(key)
+        if not reads_rain:
+            NEEDS_EXCESS.add(key)
+        out[key] = ComponentType(key, label, "uh", doc, options=structural_options(cls),
+                                 build=_build_registered(key), also_flow=reads_rain)
+    ABSTRACTION_KEYS[:] = []
+    for key, (label, cls, doc) in _abstraction_classes().items():
+        ABSTRACTION_KEYS.append(key)
+        out[key] = ComponentType(key, label, "abstraction", doc, options=structural_options(cls),
+                                 build=_build_registered(key))
     out["rdii"] = ComponentType(
         "rdii", "RDII (abstraction + UHs)", "flow",
         "Rainfall excess from an abstraction, split by fractions R_i over any number of unit hydrographs, "
@@ -251,7 +333,24 @@ def _types() -> dict[str, ComponentType]:
     return out
 
 
-COMPONENTS: dict[str, ComponentType] = _types()
+COMPONENTS: dict[str, ComponentType] = {}
+
+
+def refresh() -> None:
+    """(Re)discover component types from sparsehydro's registry, e.g. after extensions were loaded."""
+    types = _types()
+    COMPONENTS.clear()
+    COMPONENTS.update(types)
+
+
+def _initial_discovery() -> None:
+    from .extensions import load_extensions
+
+    load_extensions()  # installed extension packages register before the first discovery
+    refresh()
+
+
+_initial_discovery()
 
 
 def types_for(roles: tuple[str, ...]) -> list[ComponentType]:
@@ -353,10 +452,10 @@ def describe(spec: ComponentSpec) -> str:
 
 
 def _short(key: str) -> str:
+    if key in _UH_LABELS:
+        return _UH_LABELS[key][1]
     return {"initial-abstraction": "IA", "tank-constant": "tank", "tank-linear": "tank(lin)",
-            "tank-sqrt": "tank(sqrt)", "rtk-triangle": "RTK", "gamma-uh": "gamma", "nash-uh": "Nash",
-            "triangle-uh": "triangle", "rectangle-uh": "rectangle", "decay-uh": "decay",
-            "gamma-delay-uh": "delayed gamma", "peak-tail-uh": "peak+tail"}.get(key, key)
+            "tank-sqrt": "tank(sqrt)"}.get(key, key)
 
 
 # ---------------------------------------------------------------------------

@@ -24,6 +24,7 @@ import pandas as pd
 
 from .catalog import ModelSpec
 from .data import DatasetSpec, load_dataset
+from .migration import UH_SCHEMA
 from .objectives import DEFAULT_OBJECTIVES, ObjectiveSpec
 from .runs import RunRecord
 from .solvers import SolverSpec
@@ -49,8 +50,11 @@ class Project:
     store: ProjectStore = field(default_factory=ProjectStore.memory, repr=False, compare=False)
     #: Set when the project was imported from a legacy folder (it has no ``.shproj`` yet).
     imported_from: Path | None = None
-    #: Datasets whose source files could not be read during a legacy import.
+    #: Datasets whose source files could not be read during a legacy import, and anything the
+    #: step-based -> hours-based unit hydrograph conversion could not do.
     import_warnings: list[str] = field(default_factory=list)
+    #: ``True`` when opening converted step-based unit hydrograph parameters (see :mod:`.migration`).
+    migrated: bool = False
 
     @property
     def folder(self) -> Path | None:
@@ -127,6 +131,7 @@ class Project:
         st.replace_rows("run_array", [(r.id, r.arrays_blob()) for r in self.runs if r.has_results or r.history])
         st.set_setting("name", self.name)
         st.set_setting("format", FORMAT_VERSION)
+        st.set_setting("uh_schema", UH_SCHEMA)
         st.set_setting("objectives", [o.to_dict() for o in self.objectives])
         st.set_setting("solver", self.solver.to_dict())
         st.set_setting("ui_state", self.ui_state)
@@ -147,13 +152,23 @@ class Project:
         arrays = {r["run_id"]: r["data"] for r in store.rows("run_array")}
         for r in store.rows("run", order="position"):
             runs.append(RunRecord.from_meta(json.loads(r["meta"]), arrays.get(r["id"])))
-        return cls(
+        project = cls(
             name=store.setting("name", path.stem), path=path, datasets=datasets,
             models=[ModelSpec.from_dict(json.loads(r["spec"])) for r in store.rows("model_spec")],
             objectives=[ObjectiveSpec.from_dict(x) for x in store.setting("objectives", [])] or list(DEFAULT_OBJECTIVES),
             solver=SolverSpec.from_dict(store.setting("solver")) if store.setting("solver") else SolverSpec("nsga2"),
             runs=runs, ui_state=store.setting("ui_state", {}), store=store,
         )
+        if int(store.setting("uh_schema", 1)) < UH_SCHEMA:
+            project._migrate_uh()
+        return project
+
+    def _migrate_uh(self) -> None:
+        """Convert step-based unit hydrograph parameters (projects saved before the hours-based library)."""
+        from .migration import migrate_project
+
+        self.import_warnings += migrate_project(self)
+        self.migrated = True
 
     @classmethod
     def _import_legacy(cls, folder: Path) -> Project:
@@ -175,6 +190,7 @@ class Project:
             except Exception as exc:  # keep the spec; the series can be re-imported later
                 project.import_warnings.append(f"{spec.name}: {exc}")
                 project.upsert_dataset(spec)
+        project._migrate_uh()  # folder projects all predate hours-based unit hydrographs
         return project
 
     @staticmethod

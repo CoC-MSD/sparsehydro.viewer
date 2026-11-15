@@ -27,17 +27,22 @@ SEASONS = {12: "Winter", 1: "Winter", 2: "Winter", 3: "Spring", 4: "Spring", 5: 
            6: "Summer", 7: "Summer", 8: "Summer", 9: "Fall", 10: "Fall", 11: "Fall"}
 SEASON_ORDER = ("Winter", "Spring", "Summer", "Fall")
 
-EVENT_OPTIONS: tuple[OptionSpec, ...] = (
-    OptionSpec("uh", "choice", "peak-tail-uh", label="Unit hydrograph",
-               choices=tuple(k for k in UH_KEYS if k != "rtk-triangle"),  # fitted with its own amplitude A
-               doc="Shape fitted to each global event."),
-    OptionSpec("global_event_gap_days", "float", 1.0, label="Global gap [days]", minimum=0.01, maximum=30.0,
-               doc="Maximum separation of sub-event peaks within one global event."),
-    OptionSpec("peak_weight", "float", 3.0, label="Peak weight", minimum=0.0, maximum=100.0,
-               doc="Fit weight inside sub-event peak zones."),
-    OptionSpec("tail_weight", "float", 1.0, label="Tail weight", minimum=0.0, maximum=100.0,
-               doc="Fit weight elsewhere inside sub-events."),
-)
+def event_options() -> tuple[OptionSpec, ...]:
+    """Options of the event analysis; the UH choices are every discovered UH that reads rain directly
+    (each is fitted to an event with its own amplitude ``A``), extensions included."""
+    from .components import NEEDS_EXCESS
+
+    return (
+        OptionSpec("uh", "choice", "peak-tail-uh", label="Unit hydrograph",
+                   choices=tuple(k for k in UH_KEYS if k not in NEEDS_EXCESS),
+                   doc="Shape fitted to each global event."),
+        OptionSpec("global_event_gap_days", "float", 1.0, label="Global gap [days]", minimum=0.01, maximum=30.0,
+                   doc="Maximum separation of sub-event peaks within one global event."),
+        OptionSpec("peak_weight", "float", 3.0, label="Peak weight", minimum=0.0, maximum=100.0,
+                   doc="Fit weight inside sub-event peak zones."),
+        OptionSpec("tail_weight", "float", 1.0, label="Tail weight", minimum=0.0, maximum=100.0,
+                   doc="Fit weight elsewhere inside sub-events."),
+    )
 
 
 @dataclass
@@ -169,20 +174,20 @@ def run_event_analysis(data: pd.DataFrame, options: dict[str, Any], overrides: E
     """Detect events and fit one unit hydrograph per global event.
 
     :param data: Standardised frame (``datetime``, ``rain``, ``stormflow``).
-    :param options: Values for :data:`EVENT_OPTIONS`.
+    :param options: Values for :func:`event_options`.
     :param overrides: Manual edits; see :class:`EventOverrides`.
     :param should_stop: Checked after detection and before each event's fit;
         returning ``True`` raises :class:`InterruptedError`.
     :param progress: ``progress(done, total, text)``; ``total`` is 0 while detecting.
     """
+    from sparsehydro.calibration import GlobalSequentialFitter
     from sparsehydro.events import detect_event_hierarchy
-    from sparsehydro.models.unithydrograph import GlobalSequentialFitter
 
     from .data import dt_hours
     from .options import resolve_options
 
     report = progress or (lambda i, n, text: None)
-    opts = resolve_options(EVENT_OPTIONS, options)
+    opts = resolve_options(event_options(), options)
     df = data[["datetime", "rain", "stormflow"]].copy()
     report(0, 0, "detecting events")
     global_events, sub_events, savgol = detect_event_hierarchy(df, global_event_gap_days=opts["global_event_gap_days"])
@@ -218,4 +223,4 @@ def apply_overrides(global_events: list[Any], sub_events: list[Any],
             [s for s in sub_events if int(s.global_id) not in gone])
 
 
-__all__ = ["EVENT_OPTIONS", "SEASON_ORDER", "EventAnalysis", "EventOverrides", "apply_overrides", "run_event_analysis"]
+__all__ = ["event_options", "SEASON_ORDER", "EventAnalysis", "EventOverrides", "apply_overrides", "run_event_analysis"]

@@ -29,6 +29,15 @@ All notable changes are documented here. The format follows
   optionally with its location.
 - Application icon (window, taskbar, Windows executable and installer); the installer can associate
   `.shproj` project files with the viewer.
+- Runs on the refactored sparsehydro (hours-based unit hydrographs, `metrics`, registries). Unit
+  hydrographs, losses and objectives are discovered from sparsehydro's registries, so every registered
+  formulation is offered (Clark, ModClark, SCS, Snyder, Weibull, lognormal, generalised gamma, mixture, ...)
+  and extensions appear automatically: installed packages through the `sparsehydro.extensions` entry-point
+  group, or modules / `.py` files listed in the settings (`extensions/modules`). Solvers are built through
+  sparsehydro's solver registry; Platypus NSGA-II and CMA-ES were added.
+- The analysis dataset is shown on the toolbar of every page and can be switched there.
+- Projects saved with step-based unit hydrograph parameters are converted to hours when opened (models,
+  the working model and every run's Pareto set; see `core/migration.py`), and marked so it happens once.
 - Process builder (Model page): grow a model one process at a time - rainfall losses, a list of unit
   hydrographs, other flow components - with parameter values carried across design changes; new RTK
   triangles start progressively slower. The component-tree editor moves to an Advanced tab.

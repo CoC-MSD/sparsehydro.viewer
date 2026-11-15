@@ -2,9 +2,9 @@
 
 An :class:`OptionSpec` describes one constructor option of a model, objective
 or solver.  Views turn a sequence of them into a form; the catalogs turn the
-form's ``dict`` back into objects.  When sparsehydro gains
-``registry.describe()`` these descriptors will be produced from it instead of
-being declared here.
+form's ``dict`` back into objects.  :func:`signature_options` derives them
+from the constructors registered in sparsehydro's registries, so new library
+objectives, solvers and components appear without viewer changes.
 """
 
 from __future__ import annotations
@@ -62,6 +62,50 @@ class OptionSpec:
                 raise ValueError(f"{self.name}: {value!r} not in {self.choices}")
             return value
         return str(value)
+
+
+def signature_options(factory: Any, skip: set[str] | frozenset[str] = frozenset(),
+                      overrides: dict[str, OptionSpec] | None = None) -> tuple[tuple[OptionSpec, ...], list[str]]:
+    """Option descriptors read from a constructor's signature.
+
+    Keyword parameters with a scalar default (``bool``, ``int``, ``float``,
+    ``str``) become options; *overrides* replaces a generated descriptor (to
+    add a label, limits or choices).
+
+    :param factory: Class or callable registered in a sparsehydro registry.
+    :param skip: Parameter names the caller supplies itself (e.g. ``mask``).
+    :returns: ``(options, required)`` where *required* lists parameters without
+        a default that are not in *skip*: the factory cannot be built from
+        options alone.
+    """
+    import inspect
+
+    overrides = overrides or {}
+    target = factory.__init__ if isinstance(factory, type) else factory
+    try:
+        params = list(inspect.signature(target).parameters.values())
+    except (TypeError, ValueError):
+        return tuple(overrides.values()), []
+    opts: list[OptionSpec] = []
+    required: list[str] = []
+    for p in params:
+        if p.name in ("self", "cls") or p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD) or p.name in skip:
+            continue
+        if p.name in overrides:
+            opts.append(overrides[p.name])
+            continue
+        d = p.default
+        if d is inspect.Parameter.empty:
+            required.append(p.name)
+        elif isinstance(d, bool):
+            opts.append(OptionSpec(p.name, "bool", d))
+        elif isinstance(d, int):
+            opts.append(OptionSpec(p.name, "int", d))
+        elif isinstance(d, float):
+            opts.append(OptionSpec(p.name, "float", d))
+        elif isinstance(d, str):
+            opts.append(OptionSpec(p.name, "str", d))
+    return tuple(opts), required
 
 
 def resolve_options(specs: tuple[OptionSpec, ...] | list[OptionSpec], values: dict[str, Any] | None) -> dict[str, Any]:

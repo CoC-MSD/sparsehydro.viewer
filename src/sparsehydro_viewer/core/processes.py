@@ -33,15 +33,13 @@ import copy
 from dataclasses import dataclass, field
 from typing import Any
 
-from .components import COMPONENTS, ComponentSpec, new_component
+from .components import ABSTRACTION_KEYS, COMPONENTS, NEEDS_EXCESS, UH_KEYS, ComponentSpec, new_component
 
-LOSS_KEYS: tuple[str, ...] = ("initial-abstraction", "tank-constant", "tank-linear", "tank-sqrt")
-ROUTING_KEYS: tuple[str, ...] = (
-    "rtk-triangle", "triangle-uh", "gamma-uh", "nash-uh", "gamma-delay-uh", "peak-tail-uh", "rectangle-uh",
-    "decay-uh",
-)
+#: Losses and routing processes: everything discovered in sparsehydro's registry (live lists).
+LOSS_KEYS: list[str] = ABSTRACTION_KEYS
+ROUTING_KEYS: list[str] = UH_KEYS
 #: Unit hydrographs that route rainfall *excess* and therefore need a losses process.
-NEEDS_LOSSES: frozenset[str] = frozenset({"rtk-triangle"})
+NEEDS_LOSSES: set[str] = NEEDS_EXCESS
 
 #: Processes the library does not provide yet (enabled when the viewer moves to the refactored library).
 UNAVAILABLE = {

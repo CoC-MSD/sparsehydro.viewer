@@ -82,13 +82,13 @@ def test_growing_a_model_keeps_tuned_values() -> None:
 
 def test_direct_unit_hydrographs_keep_values() -> None:
     d0 = ProcessDesign(losses=None, routing=["gamma-uh"])
-    v0 = {"A": 120.0, "tt": 3.0, "tp": 7.0}
+    v0 = {"A": 120.0, "alpha": 3.0, "theta": 7.0}
     d1 = ProcessDesign(losses=None, routing=["gamma-uh", "triangle-uh"])
-    assert _values_after(d0, d1, v0) == {"uh1_A": 120.0, "uh1_tt": 3.0, "uh1_tp": 7.0}
+    assert _values_after(d0, d1, v0) == {"uh1_A": 120.0, "uh1_alpha": 3.0, "uh1_theta": 7.0}
     # remove the gamma: the triangle becomes the model and its values follow it
-    v1 = {"uh1_A": 120.0, "uh1_tt": 3.0, "uh2_A": 80.0, "uh2_tp": 9.0}
+    v1 = {"uh1_A": 120.0, "uh1_alpha": 3.0, "uh2_A": 80.0, "uh2_Tp": 9.0}
     d2 = ProcessDesign(losses=None, routing=["triangle-uh"])
-    assert _values_after(d1, d2, v1, {1: 0}) == {"A": 80.0, "tp": 9.0}
+    assert _values_after(d1, d2, v1, {1: 0}) == {"A": 80.0, "Tp": 9.0}
 
 
 def test_added_rtk_triangles_start_slower() -> None:

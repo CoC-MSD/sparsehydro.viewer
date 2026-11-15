@@ -1,4 +1,12 @@
-"""Objective catalog: sparsehydro objectives the viewer can configure."""
+"""Objective catalog: the objectives registered in sparsehydro, as the viewer offers them.
+
+Entries come from :data:`sparsehydro.metrics.objectives.objective_registry`;
+direction (``minimize``) comes from the objective class and options from its
+constructor. The viewer only adds display labels and short descriptions.
+Objectives whose constructor needs data the viewer cannot yet supply (event
+windows, per-step weights, dry/storm masks) are listed by :meth:`unavailable`
+and hidden from the choosers.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +14,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from .options import OptionSpec, resolve_options
+from .options import OptionSpec, resolve_options, signature_options
 
 
 @dataclass
@@ -34,53 +42,93 @@ class ObjectiveEntry:
     factory: Callable[[dict[str, Any]], Any]
 
 
-def _entries() -> list[ObjectiveEntry]:
-    from sparsehydro.calibration import objectives as O
+#: Display labels and descriptions; anything else falls back to the class docstring.
+_LABELS: dict[str, tuple[str, str]] = {
+    "nash_sutcliffe": ("NSE", "Nash-Sutcliffe efficiency (1 is perfect)."),
+    "kge": ("KGE", "Kling-Gupta efficiency (1 is perfect)."),
+    "ccc": ("Lin's CCC", "Concordance correlation coefficient."),
+    "log_nse": ("log NSE", "NSE of log flows; emphasises recessions."),
+    "index_of_agreement": ("Index of agreement", "Willmott's d."),
+    "rmse": ("RMSE", "Root mean square error (flow units)."),
+    "mae": ("MAE", "Mean absolute error (flow units)."),
+    "mse": ("MSE", "Mean square error."),
+    "peak_weighted_mse": ("Peak-weighted MSE", "MSE weighted by observed flow^power."),
+    "pbias": ("PBIAS", "Absolute percent bias in volume."),
+    "volume_relative_error": ("Volume error", "Relative volume error."),
+    "con15_error": ("Con15 error", "Error of the peak slope over the top 15 % of events."),
+    "wrmse": ("Weighted RMSE", "RMSE with per-step weights."),
+    "disjoint_ccc": ("Dry/storm CCC", "CCC combined over dry and storm windows."),
+}
 
-    def simple(cls: type) -> Callable[[dict[str, Any]], Any]:
-        return lambda _o: cls()
+_OPTION_HINTS: dict[str, OptionSpec] = {
+    "epsilon": OptionSpec("epsilon", "float", 0.01, doc="Offset added before taking logs.", minimum=0.0),
+    "power": OptionSpec("power", "float", 1.0, minimum=0.0, doc="Exponent on observed flow."),
+    "top_fraction": OptionSpec("top_fraction", "float", 0.15, minimum=0.01, maximum=1.0,
+                               doc="Fraction of events, by observed peak, in the slope."),
+}
 
-    return [
-        ObjectiveEntry("nash_sutcliffe", "NSE", False, "Nash-Sutcliffe efficiency (1 is perfect).", (), simple(O.NashSutcliffe)),
-        ObjectiveEntry("kge", "KGE", False, "Kling-Gupta efficiency (1 is perfect).", (), simple(O.KGE)),
-        ObjectiveEntry("ccc", "Lin's CCC", False, "Concordance correlation coefficient.", (),
-                       simple(O.ConcordanceCorrelationCoefficient)),
-        ObjectiveEntry("log_nse", "log NSE", False, "NSE of log flows; emphasises recessions.",
-                       (OptionSpec("epsilon", "float", 0.01, doc="Offset added before taking logs.", minimum=0.0),),
-                       lambda o: O.LogNSE(epsilon=o["epsilon"])),
-        ObjectiveEntry("index_of_agreement", "Index of agreement", False, "Willmott's d.", (),
-                       simple(O.IndexOfAgreement)),
-        ObjectiveEntry("rmse", "RMSE", True, "Root mean square error (flow units).", (), simple(O.RMSE)),
-        ObjectiveEntry("mae", "MAE", True, "Mean absolute error (flow units).", (), simple(O.MAE)),
-        ObjectiveEntry("mse", "MSE", True, "Mean square error.", (), simple(O.MSE)),
-        ObjectiveEntry("peak_weighted_mse", "Peak-weighted MSE", True, "MSE weighted by observed flow^power.",
-                       (OptionSpec("power", "float", 1.0, minimum=0.0, doc="Exponent on observed flow."),),
-                       lambda o: O.PeakWeightedMSE(power=o["power"])),
-        ObjectiveEntry("pbias", "PBIAS", True, "Absolute percent bias in volume.", (), simple(O.PBIAS)),
-        ObjectiveEntry("volume_relative_error", "Volume error", True, "Relative volume error.", (),
-                       simple(O.VolumeRelativeError)),
-    ]
+_SKIP = frozenset({"mask"})
+
+
+def _first_line(obj: Any) -> str:
+    doc = (getattr(obj, "__doc__", None) or "").strip()
+    return doc.splitlines()[0] if doc else ""
+
+
+def _registry():
+    from sparsehydro.metrics.objectives import objective_registry
+
+    return objective_registry
 
 
 class ObjectiveCatalog:
     def __init__(self) -> None:
-        self._entries = {e.name: e for e in _entries()}
+        from .extensions import load_extensions
+
+        load_extensions()  # installed extensions register their objectives first
+        self.refresh()
+
+    def refresh(self) -> None:
+        """(Re)read the registry, e.g. after extensions were loaded."""
+        self._entries: dict[str, ObjectiveEntry] = {}
+        self._unavailable: dict[str, list[str]] = {}
+        reg = _registry()
+        for name in reg.names():
+            cls = reg.get(name)
+            hints = {k: v for k, v in _OPTION_HINTS.items()}
+            options, required = signature_options(cls, _SKIP, hints)
+            if required:
+                self._unavailable[name] = required
+                continue
+            label, desc = _LABELS.get(name, (name.replace("_", " "), _first_line(cls)))
+            self._entries[name] = ObjectiveEntry(
+                name, label, bool(getattr(cls, "minimize", True)), desc, options,
+                lambda o, n=name: reg.create(n, **o))
 
     def get(self, name: str) -> ObjectiveEntry:
         try:
             return self._entries[name]
         except KeyError:
+            if name in self._unavailable:
+                raise KeyError(f"Objective {name!r} needs {self._unavailable[name]}, which the viewer "
+                               "cannot supply yet") from None
             raise KeyError(f"Unknown objective {name!r}; known: {list(self._entries)}") from None
 
     def entries(self) -> list[ObjectiveEntry]:
         return list(self._entries.values())
+
+    def unavailable(self) -> dict[str, list[str]]:
+        """Registered objectives hidden because they need data arrays: ``{name: [parameters]}``."""
+        return dict(self._unavailable)
 
     def build(self, spec: ObjectiveSpec) -> Any:
         entry = self.get(spec.name)
         return entry.factory(resolve_options(entry.options, spec.options))
 
     def label(self, name: str) -> str:
-        return self._entries[name].label if name in self._entries else name
+        if name in self._entries:
+            return self._entries[name].label
+        return _LABELS.get(name, (name,))[0]
 
 
 OBJECTIVES = ObjectiveCatalog()

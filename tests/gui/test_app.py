@@ -109,7 +109,7 @@ def test_process_builder_grows_a_model(window, qtbot, sample_frame, sample_csv) 
         s.set_values({"uh1_T": 4.0, "area_acres": 30.0})
 
     builder._add("gamma-uh")
-    assert "uh2_tt" in window.params.rows and s.values["uh1_T"] == pytest.approx(4.0)
+    assert "uh2_alpha" in window.params.rows and s.values["uh1_T"] == pytest.approx(4.0)
     # two hydrographs + their combined curve once the rebuilt model has been evaluated
     qtbot.waitUntil(lambda: len(window.ctx.controller.last.kernels) == 3, timeout=15000)
 

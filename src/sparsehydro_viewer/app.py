@@ -24,6 +24,23 @@ def _windows_taskbar_identity() -> None:
             pass
 
 
+def _load_user_extensions() -> None:
+    """Import extension modules listed in the settings (``extensions/modules``) and rediscover components."""
+    raw = QSettings().value("extensions/modules", "")
+    targets = [t for t in (raw if isinstance(raw, list) else str(raw or "").splitlines()) if str(t).strip()]
+    if not targets:
+        return
+    from .core import components
+    from .core.extensions import load_extensions
+    from .core.objectives import OBJECTIVES
+
+    rep = load_extensions(targets)
+    for label, err in rep.failed:
+        logging.getLogger(__name__).warning("extension %s failed to load: %s", label, err)
+    components.refresh()
+    OBJECTIVES.refresh()
+
+
 def create_app(argv: list[str] | None = None) -> QApplication:
     QCoreApplication.setOrganizationName(ORG_NAME)
     QCoreApplication.setApplicationName(APP_NAME)
@@ -36,6 +53,7 @@ def create_app(argv: list[str] | None = None) -> QApplication:
         from .resources import app_icon
 
         app.setWindowIcon(app_icon())
+    _load_user_extensions()
     name = QSettings().value("theme", "light")
     theme.apply(app, theme.DARK if name == "dark" else theme.LIGHT)
     return app

@@ -105,11 +105,11 @@ def test_legacy_specs_convert() -> None:
 
 
 def test_overrides_and_strictness() -> None:
-    spec = spec_for("gamma-uh", parameters={"tp": ParameterState(value=7.0, lower=1.0, upper=20.0),
+    spec = spec_for("gamma-uh", parameters={"theta": ParameterState(value=7.0, lower=1.0, upper=20.0),
                                             "A": ParameterState(calibrate=False)})
     info = {p.name: p for p in CATALOG.describe_parameters(spec)}
-    assert info["tp"].value == 7.0 and (info["tp"].lower, info["tp"].upper) == (1.0, 20.0)
-    assert info["A"].calibrate is False and info["tp"].default == 5.0
+    assert info["theta"].value == 7.0 and (info["theta"].lower, info["theta"].upper) == (1.0, 20.0)
+    assert info["A"].calibrate is False and info["theta"].default == 0.5
     bad = spec_for("gamma-uh", parameters={"nope": ParameterState(value=1.0)})
     with pytest.raises(KeyError):
         CATALOG.instantiate(bad)

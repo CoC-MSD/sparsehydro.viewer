@@ -48,35 +48,41 @@ class SolverEntry:
 _SEED = OptionSpec("seed", "int", 42, doc="Random seed; fixed seeds make runs reproducible.", minimum=0)
 
 
-def _nsga2(o: dict[str, Any], cb: Callback | None) -> Any:
-    from sparsehydro.calibration import NSGAIISolver
+def _create(registry_name: str, **kwargs: Any) -> Any:
+    """Build through sparsehydro's solver registry (the viewer's names are kept for saved projects)."""
+    from sparsehydro.calibration.solvers import solver_registry
 
-    return NSGAIISolver(pop_size=o["pop_size"], n_gen=o["n_gen"], seed=o["seed"], n_jobs=o["n_jobs"], callback=cb)
+    return solver_registry.create(registry_name, **kwargs)
+
+
+def _nsga2(o: dict[str, Any], cb: Callback | None) -> Any:
+    return _create("pymoo_nsga2", pop_size=o["pop_size"], n_gen=o["n_gen"], seed=o["seed"], n_jobs=o["n_jobs"],
+                   callback=cb)
 
 
 def _platypus(algorithm: str) -> Callable[[dict[str, Any], Callback | None], Any]:
     def build(o: dict[str, Any], cb: Callback | None) -> Any:
         import platypus
-        from sparsehydro.calibration import PlatypusSolver
 
-        return PlatypusSolver(getattr(platypus, algorithm), n_evaluations=o["n_evaluations"], seed=o["seed"],
-                              record_frequency=o["record_frequency"], callback=cb)
+        return _create("platypus", algorithm_class=getattr(platypus, algorithm), n_evaluations=o["n_evaluations"],
+                       seed=o["seed"], record_frequency=o["record_frequency"], callback=cb)
 
     return build
 
 
 def _smpso(o: dict[str, Any], cb: Callback | None) -> Any:
-    from sparsehydro.calibration import ParticleSwarmSolver
-
-    return ParticleSwarmSolver(swarm_size=o["swarm_size"], leader_size=o["swarm_size"],
-                               n_evaluations=o["n_evaluations"], seed=o["seed"],
-                               record_frequency=o["record_frequency"], callback=cb)
+    return _create("pso", swarm_size=o["swarm_size"], leader_size=o["swarm_size"], n_evaluations=o["n_evaluations"],
+                   seed=o["seed"], record_frequency=o["record_frequency"], callback=cb)
 
 
 def _scipy(o: dict[str, Any], _cb: Callback | None) -> Any:
-    from sparsehydro.calibration import ScipySolver
+    return _create("scipy", method=o["method"], objective_index=o["objective_index"], maxiter=o["maxiter"],
+                   seed=o["seed"])
 
-    return ScipySolver(method=o["method"], objective_index=o["objective_index"], maxiter=o["maxiter"], seed=o["seed"])
+
+def _cmaes(o: dict[str, Any], _cb: Callback | None) -> Any:
+    return _create("cmaes", objective_index=o["objective_index"], n_trials=o["n_trials"], seed=o["seed"],
+                   multi_start=o["multi_start"], verbose=False)
 
 
 _EVALS = OptionSpec("n_evaluations", "int", 5000, label="Evaluations", minimum=10, maximum=10_000_000,
@@ -96,6 +102,8 @@ def _entries() -> list[SolverEntry]:
                         doc="Processes used to evaluate each population.")),
             _nsga2,
         ),
+        SolverEntry("platypus-nsga2", "NSGA-II (Platypus)", "NSGA-II as implemented in Platypus.", True, True,
+                    (_EVALS, _SEED, _RECORD), _platypus("NSGAII")),
         SolverEntry("platypus-nsga3", "NSGA-III (Platypus)", "Reference-point NSGA for 3+ objectives.", True, True,
                     (_EVALS, _SEED, _RECORD), _platypus("NSGAIII")),
         SolverEntry("platypus-spea2", "SPEA2 (Platypus)", "Strength Pareto evolutionary algorithm.", True, True,
@@ -117,6 +125,18 @@ def _entries() -> list[SolverEntry]:
              OptionSpec("maxiter", "int", 200, label="Max iterations", minimum=1),
              _SEED),
             _scipy,
+        ),
+        SolverEntry(
+            "cmaes", "CMA-ES (single objective)",
+            "Covariance matrix adaptation on one objective, optionally from several starts; returns one solution. "
+            "No progress reporting.", False, False,
+            (OptionSpec("objective_index", "int", 0, label="Objective #", minimum=0,
+                        doc="Position of the objective to optimise in the objective list."),
+             OptionSpec("n_trials", "int", 2000, label="Evaluations", minimum=10),
+             OptionSpec("multi_start", "int", 1, label="Starts", minimum=1, maximum=64,
+                        doc="Independent restarts; the best result is kept."),
+             _SEED),
+            _cmaes,
         ),
     ]
 

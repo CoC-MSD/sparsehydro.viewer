@@ -93,6 +93,23 @@ def test_chart_actions_bind_to_the_active_chart(window, qtbot, sample_frame, sam
     assert tb.chart.plot is None
 
 
+def test_dataset_stays_in_view_and_switches_everywhere(window, qtbot, sample_frame, sample_csv) -> None:
+    sel = window.toolbar.dataset
+    assert sel is not None and not sel.combo.isEnabled()  # no data yet
+    _load(window, qtbot, sample_frame, sample_csv)
+    with qtbot.waitSignal(window.ctx.controller.result, timeout=15000):
+        window.ctx.session.add_dataset(DatasetSpec("second", path=str(sample_csv)), sample_frame)
+    assert [sel.combo.itemText(i) for i in range(sel.combo.count())] == ["sample", "second"]
+    assert sel.combo.currentText() == "second"
+    for row in PAGES.values():  # the same selector, visible on every page
+        window.nav.setCurrentRow(row)
+        assert sel.isVisible()
+    with qtbot.waitSignal(window.ctx.session.datasetChanged):
+        sel.combo.setCurrentIndex(0)
+    assert window.ctx.session.dataset_name == "sample"
+    assert "Calibration: 2022-05-01" in sel.combo.toolTip()
+
+
 def test_period_selection_is_a_contextual_mode(window, qtbot, sample_frame, sample_csv) -> None:
     _load(window, qtbot, sample_frame, sample_csv)
     window.nav.setCurrentRow(PAGES["Sites"])
