@@ -19,6 +19,34 @@ from .catalog import CATALOG, ModelSpec, flat_names
 from .data import Period, dt_hours, slice_period
 from .objectives import OBJECTIVES, ObjectiveSpec
 
+_SAFE_PROBLEM: type | None = None
+
+
+def nan_safe_problem_class() -> type:
+    """``CalibrationProblem`` whose undefined objective values count as the worst value.
+
+    Objectives such as KGE and Lin's CCC are undefined (NaN) when a trial solution predicts a constant
+    flow, e.g. all zeros. sparsehydro 1.0.0a1 passes the NaN to the optimiser, which then cannot rank the
+    solution; here it receives the same failure value the library uses when an objective raises. This
+    belongs in the library and is dropped when the viewer moves to the refactored sparsehydro.
+    """
+    global _SAFE_PROBLEM
+    if _SAFE_PROBLEM is None:
+        from sparsehydro.calibration import CalibrationProblem
+
+        class NanSafeCalibrationProblem(CalibrationProblem):
+            def _score(self, i, obj, predicted, clean):  # type: ignore[override]
+                val = super()._score(i, obj, predicted, clean)
+                return val if np.isfinite(val) else 1e12
+
+            def make_copy(self):  # the library's copy builds a plain CalibrationProblem
+                cp = super().make_copy()
+                cp.__class__ = type(self)
+                return cp
+
+        _SAFE_PROBLEM = NanSafeCalibrationProblem
+    return _SAFE_PROBLEM
+
 
 @dataclass(frozen=True)
 class Evaluation:
@@ -53,8 +81,6 @@ class Evaluator:
 
     def __init__(self, spec: ModelSpec, data: pd.DataFrame, objectives: Sequence[ObjectiveSpec],
                  period: Period | None = None) -> None:
-        from sparsehydro.calibration import CalibrationProblem
-
         if not objectives:
             raise ValueError("at least one objective is required")
         self.spec = spec
@@ -70,7 +96,7 @@ class Evaluator:
         self.model = self.built.model
         self.predicted_key = self.built.output_key
         self.model.validate()
-        self.problem = CalibrationProblem(
+        self.problem = nan_safe_problem_class()(
             self.model,
             CATALOG.prepare_frame(frame),
             objectives=[OBJECTIVES.build(o) for o in self.objective_specs],
@@ -124,7 +150,8 @@ class Evaluator:
         predicted = np.asarray(self.model.predict_arrays()[self.predicted_key], dtype=float)
         names = list(self.model.inequality_constraint_names)
         g = list(self.model.inequality_constraints()) if names else []
-        disp = self.to_display(F)
+        # Undefined objectives reach the optimiser as the failure value; show them as undefined.
+        disp = np.where(np.abs(F) >= 1e12, np.nan, self.to_display(F))
         return Evaluation(
             values=self.current_values(),
             predicted=predicted.copy(),

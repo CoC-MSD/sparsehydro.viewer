@@ -36,6 +36,21 @@ def test_evaluator_matches_calibration_problem(kind: str, short_frame) -> None:
     assert res.objectives["pbias"] == pytest.approx(res.F[1])
 
 
+def test_undefined_objectives_count_as_worst(short_frame) -> None:
+    """A constant (all-zero) prediction makes KGE undefined: the optimiser must see the worst value.
+
+    (Lin's CCC stays defined, at 0, because the observed series still varies.)
+    """
+    ev = Evaluator(spec_for("gamma-uh"), short_frame, [ObjectiveSpec("kge"), ObjectiveSpec("ccc"),
+                                                       ObjectiveSpec("rmse")])
+    res = ev.evaluate({"A": 0.0})
+    assert not res.predicted.any()
+    assert res.F[0] == 1e12 and res.F[1] == pytest.approx(0.0) and 0 < res.F[2] < 1e12
+    assert np.isnan(res.objectives["kge"]) and np.isfinite(res.objectives["rmse"])
+    copy = ev.problem.make_copy()
+    assert type(copy) is type(ev.problem)
+
+
 def test_fixed_parameter_changes_simulation(short_frame) -> None:
     ev = Evaluator(spec_for("nash-uh"), short_frame, OBJS)
     a = ev.evaluate({"A": 100.0}).predicted

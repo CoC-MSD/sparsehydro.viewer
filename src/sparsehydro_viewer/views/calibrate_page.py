@@ -477,8 +477,13 @@ class CalibratePage(Page):
             for _, _, F in run.history:
                 F = np.atleast_2d(F)
                 col = F[:, j] if F.size else np.array([np.nan])
-                best.append(np.nanmin(col) if flags[j] else -np.nanmin(col))
-            self.conv.plot(x, best, pen=pg.mkPen(theme.current().accent, width=2), symbol="o", symbolSize=4)
+                if not np.isfinite(col).any():  # a report with no defined value: leave a gap
+                    best.append(np.nan)
+                    continue
+                m = float(np.nanmin(col))
+                best.append(m if flags[j] else -m)
+            self.conv.plot(x, best, pen=pg.mkPen(theme.current().accent, width=2), symbol="o", symbolSize=4,
+                           connect="finite")
             self.conv.setLabel("left", labels.get(run.objective_names[j], ""))
         if run.has_results:
             values, knee = run.display_F(), run.knee_index()
