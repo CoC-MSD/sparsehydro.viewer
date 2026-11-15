@@ -35,19 +35,22 @@ from ..core.data import epoch_seconds
 from ..core.events import EVENT_OPTIONS, EventAnalysis, EventOverrides, run_event_analysis
 from ..core.uh import kernel_curves
 from ..widgets import OptionForm, TimeseriesPlot
-from .common import num_item, page_header, text_item, with_toolbar
+from .common import num_item, page_header, text_item
 from .context import AppContext
+from .shell.page import Page
 
 SORTS = {"Start time": ("start", False), "Total rain (largest first)": ("total_rain", True),
          "Peak flow (largest first)": ("peak_flow", True), "NSE (worst first)": ("nse", False)}
 
 
-class EventsPage(QWidget):
+class EventsPage(Page):
     title = "Events"
+    icon_name = "nav-events"
+    primary_text = "Detect and fit"
+    primary_tip = "Detect storm events and fit one unit hydrograph per global event"
 
     def __init__(self, ctx: AppContext) -> None:
-        super().__init__()
-        self.ctx = ctx
+        super().__init__(ctx)
         s = ctx.session
         uh_labels = {k: uh_label(k) for k in UH_KEYS}
         self.options = OptionForm(choice_labels=uh_labels)
@@ -74,9 +77,16 @@ class EventsPage(QWidget):
         self.sort.currentIndexChanged.connect(self._fill_list)
         self.events = QListWidget()
         self.events.currentItemChanged.connect(lambda *_: self._show_event())
-        prev_b, next_b = QPushButton("← Prev"), QPushButton("Next →")
-        prev_b.clicked.connect(lambda: self._step(-1))
-        next_b.clicked.connect(lambda: self._step(1))
+        self.events.currentItemChanged.connect(lambda *_: self.contextChanged.emit())
+        self.prev_action = self.action("Previous event", "Show the previous event in the list", "prev",
+                                       lambda: self._step(-1), shortcut="Left")
+        self.next_action = self.action("Next event", "Show the next event in the list", "next",
+                                       lambda: self._step(1), shortcut="Right")
+        self.exclude_action = self.action("Exclude event", "Exclude the selected global event from fitting "
+                                                           "(stored in the project) and refit", "exclude",
+                                          self._exclude)
+        self.restore_action = self.action("Restore excluded events", "Bring back all excluded events and refit",
+                                          "restore", self._restore)
         eb = QGroupBox("Global events")
         el = QVBoxLayout(eb)
         r = QHBoxLayout()
@@ -85,27 +95,15 @@ class EventsPage(QWidget):
         el.addLayout(r)
         el.addWidget(self.sort)
         el.addWidget(self.events, 1)
-        r2 = QHBoxLayout()
-        r2.addWidget(prev_b)
-        r2.addWidget(next_b)
-        el.addLayout(r2)
 
-        delete = QPushButton("Exclude event")
-        delete.setToolTip("Exclude the selected global event from fitting (stored in the project)")
-        delete.clicked.connect(self._exclude)
-        restore = QPushButton("Restore all")
-        restore.clicked.connect(self._restore)
         self.edits_note = QLabel(
-            "Adding, splitting and merging events, peak edits and smoothing pins need event-override support in "
-            "sparsehydro's detection and will appear here when it is available.")
+            "Exclude or restore events with the toolbar. Adding, splitting and merging events, peak edits and "
+            "smoothing pins need event-override support in sparsehydro's detection and will appear here when "
+            "it is available.")
         self.edits_note.setObjectName("hint")
         self.edits_note.setWordWrap(True)
         tb = QGroupBox("Edits")
         tl = QVBoxLayout(tb)
-        r3 = QHBoxLayout()
-        r3.addWidget(delete)
-        r3.addWidget(restore)
-        tl.addLayout(r3)
         tl.addWidget(self.edits_note)
 
         left = QWidget()
@@ -129,11 +127,12 @@ class EventsPage(QWidget):
         theme.plain_axes(self.uh_plot)
         self.conv_plot = TimeseriesPlot()
         self.weight_plot = TimeseriesPlot(flow_label="Weight")
-        self.tabs.addTab(with_toolbar(self.fit_plot), "1  Data fitting")
+        self.tabs.addTab(self.fit_plot, "1  Data fitting")
         self.tabs.addTab(self.uh_plot, "2  UH shapes")
-        self.tabs.addTab(with_toolbar(self.conv_plot), "3  Convolution")
-        self.tabs.addTab(with_toolbar(self.weight_plot), "4  Weights")
+        self.tabs.addTab(self.conv_plot, "3  Convolution")
+        self.tabs.addTab(self.weight_plot, "4  Weights")
         self.tabs.currentChanged.connect(lambda *_: self._show_event())
+        self.tabs.currentChanged.connect(lambda *_: self.contextChanged.emit())  # active chart follows the tab
 
         self.details = QTableWidget(0, 2)
         self.details.setHorizontalHeaderLabels(["Field", "Value"])
@@ -160,10 +159,6 @@ class EventsPage(QWidget):
                                             "←/→ move between events, 1-4 switch views."))
         lay.addWidget(split, 1)
 
-        for key, fn in (("Left", lambda: self._step(-1)), ("Right", lambda: self._step(1))):
-            sc = QShortcut(QKeySequence(key), self)
-            sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
-            sc.activated.connect(fn)
         for i in range(4):
             sc = QShortcut(QKeySequence(str(i + 1)), self)
             sc.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)
@@ -173,7 +168,26 @@ class EventsPage(QWidget):
         self._table = pd.DataFrame()
         s.projectChanged.connect(self._project_changed)
         s.datasetChanged.connect(self._dataset_changed)
+        s.datasetChanged.connect(self.contextChanged)
         self._group_changed()
+
+    # ------------------------------------------------------------------ shell
+
+    def primary(self) -> None:
+        self.run_analysis()
+
+    def primary_enabled(self) -> bool:
+        return self.ctx.session.dataset is not None and not self.stop_enabled()
+
+    def context_actions(self):
+        return [self.prev_action, self.next_action, None, self.exclude_action, self.restore_action]
+
+    def active_chart(self):
+        return {0: self.fit_plot, 2: self.conv_plot, 3: self.weight_plot}.get(self.tabs.currentIndex())
+
+    def status_text(self) -> str:
+        gid = self._current_id()
+        return f"event #{gid}" if gid is not None else ""
 
     # ------------------------------------------------------------------ overrides
 
@@ -228,7 +242,10 @@ class EventsPage(QWidget):
         self.status.setText("Detecting events and fitting...")
 
         def work(ctx):
-            return run_event_analysis(frame, opts, ov, should_stop=ctx.token)
+            def progress(i: int, n: int, text: str) -> None:
+                ctx.progress(text, i / n if n else None)
+
+            return run_event_analysis(frame, opts, ov, should_stop=ctx.token, progress=progress)
 
         def done(a: EventAnalysis) -> None:
             self.analysis = a
@@ -241,7 +258,7 @@ class EventsPage(QWidget):
         def failed(msg: str) -> None:
             self.status.setText(f"Failed: {msg}")
 
-        self.ctx.jobs.submit("Detect and fit events", work, on_done=done, on_error=failed)
+        self.submit_job("Detect and fit events", work, on_done=done, on_error=failed)
 
     # ------------------------------------------------------------------ list
 

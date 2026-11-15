@@ -83,6 +83,25 @@ def test_run_calibration_inline(short_frame, solver) -> None:
         assert [m[1]["generation"] for m in messages if m[0] == "progress"] == [1, 2, 3]
 
 
+@pytest.mark.slow
+def test_event_analysis_reports_progress_and_cancels(sample_frame) -> None:
+    from sparsehydro_viewer.core.events import run_event_analysis
+
+    calls: list[tuple[int, int, str]] = []
+    a = run_event_analysis(sample_frame, {"uh": "gamma-uh"}, progress=lambda i, n, t: calls.append((i, n, t)))
+    n = len(a.global_events)
+    assert calls[0] == (0, 0, "detecting events")
+    assert [c[0] for c in calls[1:-1]] == list(range(n)) and calls[-1] == (n, n, "done")
+    stop_after = {"left": 2}
+
+    def should_stop() -> bool:
+        stop_after["left"] -= 1
+        return stop_after["left"] < 0
+
+    with pytest.raises(InterruptedError):
+        run_event_analysis(sample_frame, {"uh": "gamma-uh"}, should_stop=should_stop)
+
+
 def test_run_calibration_cancels(short_frame) -> None:
     from sparsehydro_viewer.core.calibration import CalibrationCancelled
 

@@ -12,7 +12,6 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
-    QPushButton,
     QSplitter,
     QTableWidget,
     QVBoxLayout,
@@ -24,19 +23,19 @@ from ..core.catalog import CATALOG, ModelSpec, parameter_counts
 from ..core.data import epoch_seconds
 from ..services import LiveResult
 from ..widgets import TimeseriesPlot, UHPreview
-from ..widgets.chart_toolbar import ChartToolbar
 from ..widgets.model_composer import ModelComposer, apply_renames
 from .common import num_item, objective_labels, page_header, text_item
 from .context import AppContext
+from .shell.page import Page
 
 
-class ModelPage(QWidget):
+class ModelPage(Page):
     title = "Model"
+    icon_name = "nav-model"
     uses_working_model = True
 
     def __init__(self, ctx: AppContext) -> None:
-        super().__init__()
-        self.ctx = ctx
+        super().__init__(ctx)
         s = ctx.session
 
         self.composer = ModelComposer()
@@ -86,22 +85,15 @@ class ModelPage(QWidget):
         self.plot = TimeseriesPlot()
         plot_box = QGroupBox("Simulated vs observed (calibration period)")
         pl = QVBoxLayout(plot_box)
-        pl.addWidget(ChartToolbar(self.plot))
         pl.addWidget(self.plot, 1)
         self.uh = UHPreview()
-        pin = QPushButton("Pin shape")
-        pin.setToolTip("Keep the current unit hydrograph for comparison")
-        pin.clicked.connect(self._pin)
-        clear = QPushButton("Clear pinned")
-        clear.clicked.connect(self.uh.clear_pinned)
+        self.pin_action = self.action("Pin shape", "Keep the current unit hydrographs for comparison", "pin",
+                                      self._pin)
+        self.clear_pins_action = self.action("Clear pinned shapes", "Remove pinned unit hydrographs", "clear",
+                                             self.uh.clear_pinned)
         uh_box = QGroupBox("Unit hydrographs (unit area)")
         ul = QVBoxLayout(uh_box)
         ul.addWidget(self.uh, 1)
-        r = QHBoxLayout()
-        r.addStretch(1)
-        r.addWidget(pin)
-        r.addWidget(clear)
-        ul.addLayout(r)
 
         right = QSplitter(Qt.Orientation.Vertical)
         right.addWidget(plot_box)
@@ -127,6 +119,14 @@ class ModelPage(QWidget):
         ctx.controller.result.connect(self._on_result)
         ctx.controller.unavailable.connect(self.status.setText)
         self._sync_from_session()
+
+    # ------------------------------------------------------------------ shell
+
+    def context_actions(self):
+        return [self.pin_action, self.clear_pins_action]
+
+    def active_chart(self):
+        return self.plot
 
     # ------------------------------------------------------------------ structure
 

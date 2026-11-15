@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QSplitter,
     QTableWidget,
@@ -32,17 +33,21 @@ from ..core.solvers import SOLVERS, SolverSpec
 from ..widgets import OptionForm, ParetoLayer, ParetoPlot
 from .common import num_item, objective_better, objective_labels, page_header, text_item
 from .context import AppContext
+from .shell.page import Page
 
-RUN_COLUMNS = ["Run", "Model", "Params (cal/total)", "Solver", "Status", "Reports", "Elapsed [s]", "Solutions"]
+RUN_COLUMNS = ["Run", "Model", "Params (cal/total)", "Solver", "Status", "Progress", "Reports", "Elapsed [s]",
+               "Solutions"]
 
 
-class CalibratePage(QWidget):
+class CalibratePage(Page):
     title = "Calibrate"
+    icon_name = "nav-calibrate"
     uses_working_model = True
+    primary_text = "Run calibration"
+    primary_tip = "Calibrate the working model with the chosen objectives and optimizer"
 
     def __init__(self, ctx: AppContext, show_explore=None) -> None:
-        super().__init__()
-        self.ctx = ctx
+        super().__init__(ctx)
         self.show_explore = show_explore
         self._editing_objectives = False
         s = ctx.session
@@ -116,23 +121,16 @@ class CalibratePage(QWidget):
         self.table.horizontalHeader().setStretchLastSection(True)
         self.table.itemSelectionChanged.connect(self._monitor_selected)
         self.table.doubleClicked.connect(lambda *_: self._explore())
-        cancel = QPushButton("Cancel")
-        cancel.clicked.connect(self._cancel)
-        delete = QPushButton("Delete")
-        delete.clicked.connect(self._delete)
-        explore = QPushButton("Explore")
-        explore.clicked.connect(self._explore)
-        rerun = QPushButton("Use settings")
-        rerun.setToolTip("Load this run's model, objectives and optimizer settings into the editors")
-        rerun.clicked.connect(self._use_settings)
-        tb = QHBoxLayout()
-        tb.addStretch(1)
-        for b in (rerun, cancel, delete, explore):
-            tb.addWidget(b)
+        self.table.itemSelectionChanged.connect(self._selection_changed)
+        self.use_settings_action = self.action(
+            "Use run settings", "Load the selected run's model, objectives and optimizer settings into the editors",
+            "use-settings", self._use_settings)
+        self.explore_action = self.action("Explore run", "Open the selected run in Explore", "nav-explore",
+                                          self._explore)
+        self.delete_action = self.action("Delete runs", "Delete the selected runs", "delete", self._delete)
         runs_box = QGroupBox("Runs")
         rl = QVBoxLayout(runs_box)
         rl.addWidget(self.table, 1)
-        rl.addLayout(tb)
 
         self.conv = pg.PlotWidget()
         self.conv.setLabel("bottom", "Evaluations")
@@ -176,8 +174,11 @@ class CalibratePage(QWidget):
         s.periodsChanged.connect(self._update_hint)
         s.modelRenamed.connect(self._update_hint)
         ctx.calibration.progress.connect(self._on_progress)
+        ctx.calibration.status.connect(lambda rid, _text: self._on_run_changed(rid))
         ctx.calibration.started.connect(self._on_run_changed)
         ctx.calibration.finished.connect(self._on_finished)
+        for sig in (ctx.calibration.started, ctx.calibration.finished):
+            sig.connect(lambda *_: self.contextChanged.emit())
         self._load_from_session()
 
     # ------------------------------------------------------------------ objectives
@@ -269,7 +270,39 @@ class CalibratePage(QWidget):
             f"Model: <b>{s.model_spec.display_label}</b>, {cal} of {total} parameters calibrated "
             f"(fixed ones keep their slider values). Objectives: {len(s.objectives)}. "
             f"Dataset: {ds.name if ds else '-'} ({period}).")
-        self.run_btn.setEnabled(ds is not None and cal > 0 and len(s.objectives) > 0)
+        self._can_run = ds is not None and cal > 0 and len(s.objectives) > 0
+        self.run_btn.setEnabled(self._can_run)
+        self.contextChanged.emit()
+
+    # ------------------------------------------------------------------ shell
+
+    def primary(self) -> None:
+        self._run()
+
+    def primary_enabled(self) -> bool:
+        return getattr(self, "_can_run", False)
+
+    def stop(self) -> None:
+        """Cancel the selected runs that are active, or every active run when none is selected."""
+        selected = [r for r in self._selected_ids() if self.ctx.calibration.is_active(r)]
+        if selected:
+            for rid in selected:
+                self.ctx.calibration.cancel(rid)
+        else:
+            self.ctx.calibration.cancel_all()
+
+    def stop_enabled(self) -> bool:
+        return self.ctx.calibration.active_count > 0
+
+    def context_actions(self):
+        selected = bool(self._selected_ids())
+        for a in (self.use_settings_action, self.explore_action, self.delete_action):
+            a.setEnabled(selected)
+        return [self.use_settings_action, self.explore_action, None, self.delete_action]
+
+    def status_text(self) -> str:
+        n = self.ctx.calibration.active_count
+        return f"{n} run(s) active" if n else ""
 
     # ------------------------------------------------------------------ runs
 
@@ -310,9 +343,10 @@ class CalibratePage(QWidget):
                 self.table.selectRow(r)
                 return
 
-    def _cancel(self) -> None:
-        for rid in self._selected_ids():
-            self.ctx.calibration.cancel(rid)
+    def _selection_changed(self) -> None:
+        enabled = bool(self._selected_ids())
+        for a in (self.use_settings_action, self.explore_action, self.delete_action):
+            a.setEnabled(enabled)
 
     def _delete(self) -> None:
         ids = self._selected_ids()
@@ -356,11 +390,35 @@ class CalibratePage(QWidget):
         cal = run.n_params_calibrated or "-"
         cells = [text_item(run.label, run.id), text_item(run.model.display_label),
                  text_item(f"{cal} / {run.n_params_total}"), text_item(solver), text_item(run.status),
-                 num_item(len(run.history)), num_item(run.elapsed_s, "{:.1f}"), num_item(run.n_solutions)]
+                 text_item(""), num_item(len(run.history)), num_item(run.elapsed_s, "{:.1f}"),
+                 num_item(run.n_solutions)]
         if run.message:
             cells[4].setToolTip(run.message)
         for c, it in enumerate(cells):
             self.table.setItem(r, c, it)
+        self._set_progress(r, run)
+
+    def _set_progress(self, r: int, run: RunRecord) -> None:
+        """Progress bar in the Progress column while a run is queued or running."""
+        col = RUN_COLUMNS.index("Progress")
+        if run.status not in ("queued", "running"):
+            self.table.removeCellWidget(r, col)
+            self.table.item(r, col).setText("100%" if run.status == "finished" else "")
+            return
+        bar = self.table.cellWidget(r, col)
+        if not isinstance(bar, QProgressBar):
+            bar = QProgressBar()
+            bar.setMaximumHeight(16)
+            bar.setTextVisible(True)
+            self.table.setCellWidget(r, col, bar)
+        frac, text = self.ctx.calibration.progress_info(run.id)
+        if run.status == "queued" or frac is None:
+            bar.setRange(0, 0)
+            bar.setFormat(text or run.status)
+        else:
+            bar.setRange(0, 1000)
+            bar.setValue(int(frac * 1000))
+            bar.setFormat(f"{frac:.0%}  {text}")
 
     def _row_of(self, run_id: str) -> int | None:
         for r in range(self.table.rowCount()):

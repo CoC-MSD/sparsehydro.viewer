@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QPushButton,
     QSplitter,
     QTableWidget,
     QVBoxLayout,
@@ -27,8 +26,9 @@ from ..core.runs import RunRecord
 from ..core.uh import KernelCurve, kernel_curves
 from ..services import LiveResult
 from ..widgets import AxisSpec, ParallelCoordinates, ParetoLayer, ParetoPlot, TimeseriesPlot, UHPreview
-from .common import num_item, objective_better, objective_labels, page_header, text_item, with_toolbar
+from .common import num_item, objective_better, objective_labels, page_header, text_item
 from .context import AppContext
+from .shell.page import Page
 
 MAX_BAND = 60
 
@@ -69,36 +69,31 @@ def simulate_selection(run: RunRecord, frame, calibration: Period, validation: P
     return _Sim(run.id, index, epoch_seconds(ev.datetime), ev.rain, ev.observed, res.predicted, band, curves, val)
 
 
-class ExplorePage(QWidget):
+class ExplorePage(Page):
     title = "Explore"
+    icon_name = "nav-explore"
     uses_working_model = True
 
     def __init__(self, ctx: AppContext) -> None:
-        super().__init__()
-        self.ctx = ctx
+        super().__init__(ctx)
         s = ctx.session
         self.run_box = QComboBox()
         self.run_box.currentIndexChanged.connect(self._run_changed)
         self.info = QLabel()
         self.info.setObjectName("hint")
-        knee = QPushButton("Knee")
-        knee.setToolTip("Select the balanced (knee) solution")
-        knee.clicked.connect(self._select_knee)
+        self.knee_action = self.action("Select knee", "Select the balanced (knee) solution", "knee",
+                                       self._select_knee, shortcut="K")
+        self.load_action = self.action("Load into sliders", "Make this run's model the working model with the "
+                                                            "selected solution's values", "load-sliders", self._load)
         self.best_box = QComboBox()
         self.best_box.setToolTip("Select the best solution for an objective")
         self.best_box.activated.connect(self._select_best)
-        load = QPushButton("Load into sliders")
-        load.setObjectName("primary")
-        load.setToolTip("Make this run's model the working model with the selected solution's values")
-        load.clicked.connect(self._load)
         top = QHBoxLayout()
         top.addWidget(QLabel("Run"))
         top.addWidget(self.run_box, 2)
         top.addWidget(self.info, 3)
-        top.addWidget(knee)
-        top.addWidget(QLabel("Best:"))
+        top.addWidget(QLabel("Best for:"))
         top.addWidget(self.best_box)
-        top.addWidget(load)
 
         self.pareto = ParetoPlot(labels=objective_labels(), better=objective_better())
         self.parallel = ParallelCoordinates()
@@ -138,7 +133,7 @@ class ExplorePage(QWidget):
         sl.addWidget(self.params, 1)
         side.addWidget(sel_box)
         bottom = QSplitter()
-        bottom.addWidget(boxed("Hydrograph (calibration period; band = filtered solutions)", with_toolbar(self.ts)))
+        bottom.addWidget(boxed("Hydrograph (calibration period; band = filtered solutions)", self.ts))
         bottom.addWidget(side)
         bottom.setStretchFactor(0, 2)
         main = QSplitter(Qt.Orientation.Vertical)
@@ -156,6 +151,7 @@ class ExplorePage(QWidget):
         s.runsChanged.connect(self.refresh_runs)
         s.runUpdated.connect(lambda _rid: self.refresh_runs())
         s.selectionChanged.connect(self._selection_changed)
+        s.selectionChanged.connect(lambda *_: self.contextChanged.emit())
         s.projectChanged.connect(self.refresh_runs)
         self._pareto_rows: list[int] | None = None  # layer index -> run index while filtered
         self._pareto_other: list[int] = []
@@ -164,6 +160,20 @@ class ExplorePage(QWidget):
         self.parallel.selectionChanged.connect(self._brush_changed)
         ctx.controller.result.connect(self._live)
         self.refresh_runs()
+
+    # ------------------------------------------------------------------ shell
+
+    def context_actions(self):
+        return [self.knee_action, self.load_action]
+
+    def active_chart(self):
+        return self.ts
+
+    def status_text(self) -> str:
+        s = self.ctx.session
+        if self._run is None or s.selected_run != self._run.id or not s.selected_solutions:
+            return ""
+        return f"{self._run.label}: solution #{s.selected_solutions[0]}"
 
     # ------------------------------------------------------------------ runs
 
@@ -285,7 +295,7 @@ class ExplorePage(QWidget):
         def work(_ctx):
             return simulate_selection(run, frame, cal, val, idx, brushed)
 
-        self.ctx.jobs.submit(f"Simulate {run.label} #{idx}", work, on_done=self._show_sim)
+        self.submit_job(f"Simulate {run.label} #{idx}", work, on_done=self._show_sim)
 
     def _show_sim(self, sim: _Sim) -> None:
         if self._pending_job != (sim.run_id, sim.index) or self._run is None:

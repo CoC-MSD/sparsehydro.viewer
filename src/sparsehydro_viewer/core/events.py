@@ -164,13 +164,16 @@ class EventAnalysis:
 
 
 def run_event_analysis(data: pd.DataFrame, options: dict[str, Any], overrides: EventOverrides | None = None,
-                       should_stop: Callable[[], bool] = lambda: False) -> EventAnalysis:
+                       should_stop: Callable[[], bool] = lambda: False,
+                       progress: Callable[[int, int, str], None] | None = None) -> EventAnalysis:
     """Detect events and fit one unit hydrograph per global event.
 
     :param data: Standardised frame (``datetime``, ``rain``, ``stormflow``).
     :param options: Values for :data:`EVENT_OPTIONS`.
     :param overrides: Manual edits; see :class:`EventOverrides`.
-    :param should_stop: Checked between detection and fitting.
+    :param should_stop: Checked after detection and before each event's fit;
+        returning ``True`` raises :class:`InterruptedError`.
+    :param progress: ``progress(done, total, text)``; ``total`` is 0 while detecting.
     """
     from sparsehydro.events import detect_event_hierarchy
     from sparsehydro.models.unithydrograph import GlobalSequentialFitter
@@ -178,15 +181,31 @@ def run_event_analysis(data: pd.DataFrame, options: dict[str, Any], overrides: E
     from .data import dt_hours
     from .options import resolve_options
 
+    report = progress or (lambda i, n, text: None)
     opts = resolve_options(EVENT_OPTIONS, options)
     df = data[["datetime", "rain", "stormflow"]].copy()
+    report(0, 0, "detecting events")
     global_events, sub_events, savgol = detect_event_hierarchy(df, global_event_gap_days=opts["global_event_gap_days"])
     global_events, sub_events = apply_overrides(global_events, sub_events, overrides)
     if should_stop():
         raise InterruptedError("cancelled")
     uh_key = opts["uh"]
-    summary = GlobalSequentialFitter(lambda: build_uh(uh_key), df, global_events, sub_events).fit(
+    n = len(global_events)
+    calls = [0]
+
+    def factory() -> Any:
+        # The fitter builds one model per global event (and one more at the end for its summary),
+        # so counting calls gives exact progress and a clean place to stop.
+        if should_stop():
+            raise InterruptedError("cancelled")
+        if calls[0] < n:
+            report(calls[0], n, f"fitting event {calls[0] + 1}/{n}")
+        calls[0] += 1
+        return build_uh(uh_key)
+
+    summary = GlobalSequentialFitter(factory, df, global_events, sub_events).fit(
         peak_weight=opts["peak_weight"], tail_weight=opts["tail_weight"], verbose=False)
+    report(n, n, "done")
     return EventAnalysis(df, global_events, sub_events, savgol, summary, dt_hours(df), uh_key, opts)
 
 

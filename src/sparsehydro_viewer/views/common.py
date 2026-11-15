@@ -57,19 +57,6 @@ def text_item(text: str, data: object = None) -> QTableWidgetItem:
     return it
 
 
-def with_toolbar(plot) -> QWidget:
-    """A TimeseriesPlot with its navigation toolbar (pan, zoom box, fit, auto Y, export) above it."""
-    from ..widgets.chart_toolbar import ChartToolbar
-
-    w = QWidget()
-    lay = QVBoxLayout(w)
-    lay.setContentsMargins(0, 0, 0, 0)
-    lay.setSpacing(0)
-    lay.addWidget(ChartToolbar(plot))
-    lay.addWidget(plot, 1)
-    return w
-
-
 def hbox(*widgets: QWidget, stretch_last: bool = False) -> QHBoxLayout:
     lay = QHBoxLayout()
     for w in widgets:

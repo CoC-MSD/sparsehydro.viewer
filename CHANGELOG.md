@@ -8,6 +8,12 @@ All notable changes are documented here. The format follows
 
 ### Added
 
+- Application shell: one standard toolbar on every page (project, Run/Stop for the page's command, chart
+  navigation bound to the page's active chart, page-specific actions) and a standard status bar (message,
+  context, cursor readout, activity with a global progress bar). SVG icon set, tinted to the theme.
+- Progress reporting: per-run progress bars in Calibrate (generations or evaluations), event detection and
+  fitting report event i/N and can be stopped between events.
+
 - PySide6 + pyqtgraph application with six workspaces: Data, Model, Events, Calibrate, Explore and Compare.
 - Parameter dock with linear or log sliders, editable bounds and calibrate flags; live re-simulation on a
   worker thread with request coalescing.

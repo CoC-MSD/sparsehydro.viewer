@@ -37,10 +37,11 @@ from ..core.data import (
     summarize,
 )
 from ..widgets import TimeseriesPlot
-from ..widgets.chart_toolbar import ChartToolbar
+from ..widgets.chart_actions import PeriodActions
 from ..widgets.timeseries_plot import PERIOD_COLORS
 from .common import page_header
 from .context import AppContext
+from .shell.page import Page
 
 _COLUMN_ROLES = (("datetime", "Date/time"), ("rain", "Rain (depth per step)"),
                  ("stormflow", "Observed flow (target)"),
@@ -96,12 +97,14 @@ class _PeriodEditor(QWidget):
         return Period(self.start.dateTime().toPython().strftime(fmt), self.end.dateTime().toPython().strftime(fmt))
 
 
-class DataPage(QWidget):
+class DataPage(Page):
     title = "Data"
+    icon_name = "nav-data"
+    primary_text = "Load dataset"
+    primary_tip = "Read the file(s) chosen in the Source form"
 
     def __init__(self, ctx: AppContext) -> None:
-        super().__init__()
-        self.ctx = ctx
+        super().__init__(ctx)
         s = ctx.session
 
         # -- source ----------------------------------------------------------
@@ -186,17 +189,13 @@ class DataPage(QWidget):
         left.setMaximumWidth(480)
 
         self.plot = TimeseriesPlot()
-        self.toolbar = ChartToolbar(self.plot, periods=True)
-        self.toolbar.periodEdited.connect(self._period_from_chart)
-        self.toolbar.periodCleared.connect(lambda key: self.ctx.session.set_period(key, Period()))
-        chart = QWidget()
-        cl = QVBoxLayout(chart)
-        cl.setContentsMargins(0, 0, 0, 0)
-        cl.addWidget(self.toolbar)
-        cl.addWidget(self.plot, 1)
+        # Period tools appear in the application toolbar while this page is shown.
+        self.periods = PeriodActions(self.plot, self)
+        self.periods.periodEdited.connect(self._period_from_chart)
+        self.periods.periodCleared.connect(lambda key: self.ctx.session.set_period(key, Period()))
         split = QSplitter()
         split.addWidget(left)
-        split.addWidget(chart)
+        split.addWidget(self.plot)
         split.setStretchFactor(1, 1)
         lay = QVBoxLayout(self)
         lay.addWidget(page_header("Data", "Load rainfall and flow, check the record, and choose the calibration "
@@ -205,6 +204,26 @@ class DataPage(QWidget):
         s.datasetChanged.connect(self.refresh)
         s.projectChanged.connect(self.refresh)
         s.periodsChanged.connect(self._show_periods)
+        s.periodsChanged.connect(self.contextChanged)
+        s.datasetChanged.connect(self.contextChanged)
+
+    # ------------------------------------------------------------------ shell
+
+    def primary(self) -> None:
+        self._load()
+
+    def context_actions(self):
+        return self.periods.actions()
+
+    def active_chart(self):
+        return self.plot
+
+    def status_text(self) -> str:
+        ds = self.ctx.session.dataset
+        if ds is None:
+            return ""
+        cal = "whole record" if ds.calibration.is_open else f"{ds.calibration.start[:10]} → {(ds.calibration.end or '')[:10]}"
+        return f"calibration: {cal}"
 
     # ------------------------------------------------------------------ source
 
@@ -265,7 +284,7 @@ class DataPage(QWidget):
         def done(frame: pd.DataFrame) -> None:
             self.ctx.session.add_dataset(spec, frame)
 
-        self.ctx.jobs.submit(f"Load {spec.name}", work, on_done=done,
+        self.submit_job(f"Load {spec.name}", work, on_done=done,
                              on_error=lambda m: QMessageBox.warning(self, "Load failed", m))
 
     # ------------------------------------------------------------------ periods

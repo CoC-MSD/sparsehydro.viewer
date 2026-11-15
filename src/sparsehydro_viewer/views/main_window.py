@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
-    QLabel,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
@@ -29,6 +28,7 @@ from PySide6.QtWidgets import (
 
 from .. import APP_NAME, __version__, theme
 from ..core.project import Project
+from ..resources import icon
 from ..services import CalibrationService, JobManager, LiveEvaluationService
 from ..session import Session
 from ..widgets import ParameterPanel
@@ -40,6 +40,7 @@ from .data_page import DataPage
 from .events_page import EventsPage
 from .explore_page import ExplorePage
 from .model_page import ModelPage
+from .shell import MainToolBar, Page, StandardStatusBar
 
 MAX_RECENT = 8
 
@@ -76,16 +77,18 @@ class MainWindow(QMainWindow):
         self.nav.setFixedWidth(118)
         self.stack = QStackedWidget()
         self.explore = ExplorePage(self.ctx)
-        self.pages: list[QWidget] = [
+        self.pages: list[Page] = [
             DataPage(self.ctx), ModelPage(self.ctx), EventsPage(self.ctx),
             CalibratePage(self.ctx, show_explore=self.show_explore), self.explore, ComparePage(self.ctx),
         ]
+        self.nav.setIconSize(QSize(20, 20))
         for i, page in enumerate(self.pages):
             self.stack.addWidget(page)
-            item = QListWidgetItem(page.title)
+            item = QListWidgetItem(icon(page.icon_name), page.title)
             item.setToolTip(f"Ctrl+{i + 1}")
             item.setSizeHint(QSize(100, 40))
             self.nav.addItem(item)
+            page.contextChanged.connect(lambda p=page: self._page_context_changed(p))
             act = QAction(self)
             act.setShortcut(QKeySequence(f"Ctrl+{i + 1}"))
             act.triggered.connect(lambda _=False, i=i: self.nav.setCurrentRow(i))
@@ -151,20 +154,24 @@ class MainWindow(QMainWindow):
         self._log_bridge.message.connect(self.log_view.appendPlainText)
         logging.getLogger().addHandler(self._log_bridge)
 
-        # -- status bar --------------------------------------------------------------
-        self.status_model = QLabel()
-        self.status_jobs = QLabel()
-        self.statusBar().addWidget(self.status_model, 1)
-        self.statusBar().addPermanentWidget(self.status_jobs)
-        session.modelChanged.connect(self._update_status)
-        session.parametersEdited.connect(self._update_status)
-        session.datasetChanged.connect(self._update_status)
-        calibration.started.connect(lambda *_: self._update_status())
-        calibration.finished.connect(lambda *_: self._update_status())
+        # -- standard status bar ---------------------------------------------------------
+        self.status = StandardStatusBar(jobs, calibration, self)
+        self.setStatusBar(self.status)
+        self.status.activity.clicked.connect(self._show_activity)
+        for sig in (session.modelChanged, session.modelRenamed, session.parametersEdited, session.datasetChanged,
+                    session.periodsChanged, session.projectChanged):
+            sig.connect(self._update_status)
         session.dirtyChanged.connect(lambda *_: self._update_title())
-        controller.unavailable.connect(lambda msg: self.statusBar().showMessage(msg, 5000))
+        controller.unavailable.connect(lambda msg: self.status.showMessage(msg, 5000))
 
+        # -- shared actions, menus and the standard toolbar ----------------------------
+        self._build_actions()
         self._build_menus()
+        self.toolbar = MainToolBar(self, [self.new_action, self.open_action, self.save_action],
+                                   [self.param_toggle, self.activity_toggle])
+        self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar)
+        for sig in (jobs.jobAdded, jobs.jobChanged, calibration.started, calibration.finished):
+            sig.connect(lambda *_: self.toolbar.refresh())
         self.resize(1500, 920)
         geo = self.settings.value("window/geometry")
         if geo is not None:
@@ -173,6 +180,7 @@ class MainWindow(QMainWindow):
         if state is not None:
             self.restoreState(state)
         self.nav.setCurrentRow(0)
+        self._page_changed(0)
         self._rebuild_params()
         self._update_param_context()
         self._update_status()
@@ -180,21 +188,41 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------ menus
 
+    def _build_actions(self) -> None:
+        """Actions shared by the menus and the standard toolbar."""
+        def make(text, slot, icon_name, shortcut=None, tip=None) -> QAction:
+            act = QAction(icon(icon_name), text, self)
+            act.triggered.connect(lambda *_: slot())
+            if shortcut is not None:
+                act.setShortcut(QKeySequence(shortcut))
+            act.setToolTip(tip or text.replace("&", "").rstrip("."))
+            return act
+
+        self.new_action = make("&New project", self.new_project, "new", QKeySequence.StandardKey.New)
+        self.open_action = make("&Open project...", self.open_project_dialog, "open", QKeySequence.StandardKey.Open)
+        self.save_action = make("&Save project", self.save_project, "save", QKeySequence.StandardKey.Save)
+        self.param_toggle = self.param_dock.toggleViewAction()
+        self.param_toggle.setIcon(icon("sliders"))
+        self.param_toggle.setToolTip("Show or hide the working-model parameters")
+        self.activity_toggle = self.job_dock.toggleViewAction()
+        self.activity_toggle.setIcon(icon("activity"))
+        self.activity_toggle.setToolTip("Show or hide the Activity panel (jobs and log)")
+
     def _build_menus(self) -> None:
         mb = self.menuBar()
         f = mb.addMenu("&File")
-        self._add(f, "&New project", self.new_project, QKeySequence.StandardKey.New)
-        self._add(f, "&Open project...", self.open_project_dialog, QKeySequence.StandardKey.Open)
+        f.addAction(self.new_action)
+        f.addAction(self.open_action)
         self.recent_menu = f.addMenu("Open &recent")
         self._fill_recent()
         f.addSeparator()
-        self._add(f, "&Save project", self.save_project, QKeySequence.StandardKey.Save)
+        f.addAction(self.save_action)
         self._add(f, "Save project &as...", self.save_project_as, QKeySequence.StandardKey.SaveAs)
         f.addSeparator()
         self._add(f, "E&xit", self.close, QKeySequence.StandardKey.Quit)
         v = mb.addMenu("&View")
-        v.addAction(self.param_dock.toggleViewAction())
-        v.addAction(self.job_dock.toggleViewAction())
+        v.addAction(self.param_toggle)
+        v.addAction(self.activity_toggle)
         v.addSeparator()
         self._add(v, "&Light theme", lambda: self.set_theme("light"))
         self._add(v, "&Dark theme", lambda: self.set_theme("dark"))
@@ -319,10 +347,28 @@ class MainWindow(QMainWindow):
             f"<span style='font-size:9pt'>{data}<br>Drives the Model page simulation, the ★ point in "
             "Explore and Compare, and is the starting point for new Calibrate runs.</span>")
 
+    def current_page(self) -> Page:
+        return self.pages[max(0, self.nav.currentRow())]
+
     def _page_changed(self, row: int) -> None:
-        """Show the working-model dock only where it has an effect."""
-        uses = getattr(self.pages[row], "uses_working_model", False)
-        self.param_dock.setVisible(uses)
+        """Swap the toolbar's page actions, rebind the chart tools and show the dock only where it applies."""
+        if not hasattr(self, "toolbar") or row < 0:
+            return
+        page = self.pages[row]
+        self.param_dock.setVisible(page.uses_working_model)
+        self.toolbar.set_page(page)
+        self.status.bind_chart(page.active_chart())
+        self._update_status()
+
+    def _page_context_changed(self, page: Page) -> None:
+        if hasattr(self, "toolbar") and page is self.current_page():
+            self.toolbar.refresh()
+            self.status.bind_chart(page.active_chart())
+            self._update_status()
+
+    def _show_activity(self) -> None:
+        self.job_dock.show()
+        self.job_dock.raise_()
 
     # ------------------------------------------------------------------ jobs
 
@@ -337,11 +383,9 @@ class MainWindow(QMainWindow):
         self.job_table.setItem(r, 1, text_item(info.state))
         self.job_table.setItem(r, 2, num_item(info.fraction * 100 if info.fraction >= 0 else None, "{:.0f}%"))
         self.job_table.setItem(r, 3, text_item(info.text))
-        running = sum(j.state == "running" for j in self.ctx.jobs.jobs())
-        self._jobs_running = running
-        self._update_status()
         if info.state == "failed":
             self.job_dock.show()
+            self.status.showMessage(f"{info.label} failed: {info.text}", 10000)
 
     def _cancel_job(self) -> None:
         r = self.job_table.currentRow()
@@ -351,19 +395,20 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------ status
 
     def _update_status(self) -> None:
+        """Context zone: project | dataset | working model | page-specific text."""
+        if not hasattr(self, "status"):
+            return
         s = self.ctx.session
-        info = s.parameter_info()
-        k = sum(p.calibrate for p in info)
-        ds = s.dataset_name or "no dataset"
-        self.status_model.setText(f"{ds}  |  {s.model_spec.display_label}: {len(info)} parameters, {k} calibrated")
-        n_cal = self.ctx.calibration.active_count
-        n_jobs = getattr(self, "_jobs_running", 0)
-        parts = []
-        if n_cal:
-            parts.append(f"{n_cal} calibration run(s) active")
-        if n_jobs:
-            parts.append(f"{n_jobs} background job(s)")
-        self.status_jobs.setText("   ".join(parts))
+        flags = s.calibrate_flags()
+        k = sum(flags.values())
+        project = s.project.name if s.project.folder else "Untitled"
+        parts = [project, s.dataset_name or "no dataset",
+                 f"{s.model_spec.display_label} ({len(flags)} parameters, {k} calibrated)"]
+        if hasattr(self, "toolbar"):
+            extra = self.current_page().status_text()
+            if extra:
+                parts.append(extra)
+        self.status.set_context("   │   ".join(parts))
 
     def _update_title(self) -> None:
         p = self.ctx.session.project

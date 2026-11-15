@@ -58,6 +58,8 @@ class TimeseriesPlot(pg.GraphicsLayoutWidget):
     rangeSelected = Signal(float, float)
     periodChanged = Signal(str, float, float)
     modeChanged = Signal(str)
+    #: Mouse over the flow panel: (time in epoch seconds, flow); NaN, NaN when it leaves.
+    cursorMoved = Signal(float, float)
 
     def __init__(self, parent=None, *, rain: bool = True, flow_label: str = "Flow [cfs]") -> None:
         super().__init__(parent)
@@ -100,6 +102,14 @@ class TimeseriesPlot(pg.GraphicsLayoutWidget):
         self._rain_item: pg.PlotDataItem | None = None
         self._obs_item: pg.PlotDataItem | None = None
         self._t: np.ndarray | None = None
+        self.scene().sigMouseMoved.connect(self._mouse_moved)
+
+    def _mouse_moved(self, pos) -> None:
+        if self.flow_plot.sceneBoundingRect().contains(pos):
+            p = self.flow_plot.getViewBox().mapSceneToView(pos)
+            self.cursorMoved.emit(float(p.x()), float(p.y()))
+        else:
+            self.cursorMoved.emit(float("nan"), float("nan"))
 
     def _plots(self) -> list[pg.PlotItem]:
         return [p for p in (self.rain_plot, self.flow_plot) if p is not None]

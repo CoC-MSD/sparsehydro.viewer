@@ -105,7 +105,7 @@ def test_periods_from_chart_cascade(window, qtbot, sample_frame, sample_csv) -> 
     page = window.pages[0]
     a, b = (pd.Timestamp("2022-05-03 00:02"), pd.Timestamp("2022-05-09 12:00"))
     with qtbot.waitSignal(window.ctx.controller.result, timeout=15000) as sig:
-        page.toolbar.periodEdited.emit("calibration", a.timestamp(), b.timestamp())
+        page.periods.periodEdited.emit("calibration", a.timestamp(), b.timestamp())
     # snapped to the 5-minute record and stored in the session...
     assert s.dataset.calibration.start == "2022-05-03 00:05:00"
     # ...mirrored in the date editors and the draggable region, and re-evaluated on the new period
@@ -113,7 +113,7 @@ def test_periods_from_chart_cascade(window, qtbot, sample_frame, sample_csv) -> 
     assert page.plot.period("calibration") is not None
     assert str(sig.args[0].datetime[0])[:16] == "2022-05-03T00:05"
     with qtbot.waitSignal(s.periodsChanged):
-        page.toolbar.periodCleared.emit("validation")
+        page.periods.periodCleared.emit("validation")
     assert s.dataset.validation.is_open and page.plot.period("validation") is None
 
 

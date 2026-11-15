@@ -15,7 +15,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QPushButton,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -29,8 +28,9 @@ from ..core.diagnostics import ComplexityPoint, complexity_front, fit_statistics
 from ..core.evaluation import Evaluator
 from ..core.runs import RunRecord
 from ..widgets import AxisSpec, ParallelCoordinates, ParetoLayer, ParetoPlot, TimeseriesPlot
-from .common import num_item, objective_better, objective_labels, page_header, text_item, with_toolbar
+from .common import num_item, objective_better, objective_labels, page_header, text_item
 from .context import AppContext
+from .shell.page import Page
 
 SCORE_COLUMNS = ["cal NSE", "cal RMSE", "AIC", "BIC", "val NSE", "val RMSE"]
 PARAMS_AXIS = "__n_params__"
@@ -69,13 +69,16 @@ def score_run(run: RunRecord, frame, calibration, validation, index: int) -> _Sc
                   run.dataset)
 
 
-class ComparePage(QWidget):
+class ComparePage(Page):
     title = "Compare"
+    icon_name = "nav-compare"
     uses_working_model = True
+    primary_text = "Score runs"
+    primary_tip = ("Simulate each ticked run's chosen solution on the calibration and validation periods and "
+                   "compute NSE, RMSE, AIC and BIC")
 
     def __init__(self, ctx: AppContext) -> None:
-        super().__init__()
-        self.ctx = ctx
+        super().__init__(ctx)
         s = ctx.session
         self.table = QTableWidget(0, 0)
         self.table.verticalHeader().setVisible(False)
@@ -90,18 +93,12 @@ class ComparePage(QWidget):
         self.solution.addItem("Knee solution", "knee")
         self.solution.addItem("Best for the plotted objective", "best")
         self.solution.currentIndexChanged.connect(self._solution_changed)
-        score = QPushButton("Score selected runs")
-        score.setObjectName("primary")
-        score.setToolTip("Simulate each checked run's chosen solution on the calibration and validation periods "
-                         "and compute NSE, RMSE, AIC and BIC")
-        score.clicked.connect(self._score)
         ctl = QHBoxLayout()
         ctl.addWidget(QLabel("Measure"))
         ctl.addWidget(self.metric, 1)
         ctl.addWidget(QLabel("Solution"))
         ctl.addWidget(self.solution, 1)
         ctl.addStretch(1)
-        ctl.addWidget(score)
         tbox = QGroupBox("Runs (tick to compare)")
         tl = QVBoxLayout(tbox)
         tl.addLayout(ctl)
@@ -141,7 +138,7 @@ class ComparePage(QWidget):
         main = QSplitter(Qt.Orientation.Vertical)
         main.addWidget(top)
         main.addWidget(mid)
-        main.addWidget(boxed("Chosen solutions (calibration period)", with_toolbar(self.ts)))
+        main.addWidget(boxed("Chosen solutions (calibration period)", self.ts))
         lay = QVBoxLayout(self)
         lay.addWidget(page_header("Compare", "Compare alternative models. Prefer the simplest model whose "
                                              "performance is close to the best; the step line shows where extra "
@@ -241,6 +238,7 @@ class ComparePage(QWidget):
         self.table.setSortingEnabled(True)
         self._filling = False
         self._draw()
+        self.contextChanged.emit()
 
     def _color_index(self, run_id: str) -> int:
         ids = [r.id for r in self._runs()]
@@ -255,12 +253,28 @@ class ComparePage(QWidget):
         else:
             self._checked.discard(rid)
         self._draw()
+        self.contextChanged.emit()
 
     def _solution_changed(self) -> None:
         self._scores.clear()
         self.refresh()
 
     # ------------------------------------------------------------------ scoring
+
+    # ------------------------------------------------------------------ shell
+
+    def primary(self) -> None:
+        self._score()
+
+    def primary_enabled(self) -> bool:
+        return bool(self._selected_runs()) and not self.stop_enabled()
+
+    def active_chart(self):
+        return self.ts
+
+    def status_text(self) -> str:
+        n = len(self._selected_runs())
+        return f"{n} run(s) ticked" if n else ""
 
     def _score(self) -> None:
         s = self.ctx.session
@@ -288,7 +302,7 @@ class ComparePage(QWidget):
                 self._scores[sc.run_id] = sc
             self.refresh()
 
-        self.ctx.jobs.submit("Score runs", work, on_done=done)
+        self.submit_job("Score runs", work, on_done=done)
 
     # ------------------------------------------------------------------ plots
 

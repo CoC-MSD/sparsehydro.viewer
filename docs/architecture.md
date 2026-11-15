@@ -26,6 +26,20 @@ sparsehydro_viewer/
   views/                  pages and main window (no sparsehydro imports)
 ```
 
+## Application shell
+
+`views/shell/` holds the parts every page shares:
+
+- `page.py` - `Page`, the base class of every workspace. A page declares `primary_text` and implements
+  `primary()` (the toolbar's Run button), `stop()` / `stop_enabled()` (Stop), `context_actions()`
+  (page-specific toolbar buttons), `active_chart()` (the chart the navigation buttons act on) and
+  `status_text()`; it emits `contextChanged` when any of these change. `submit_job()` runs background work
+  that Stop can cancel.
+- `toolbar.py` - `MainToolBar`: project actions, Run/Stop, `ChartActions` (pan, zoom box, fit, auto Y,
+  export; `widgets/chart_actions.py`), the current page's actions, dock toggles.
+- `status_bar.py` - `StandardStatusBar`: message, context, cursor readout of the active chart, and
+  `activity.py`'s `ActivityIndicator` (one progress bar over thread-pool jobs and calibration processes).
+
 ## Model-view-controller
 
 `Session` is the model. Views never talk to each other: they write to the session and redraw from its
