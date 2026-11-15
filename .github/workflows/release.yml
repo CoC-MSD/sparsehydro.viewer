@@ -32,7 +32,7 @@ jobs:
           python-version: "3.12"
       - name: Install
         run: |
-          pip install "sparsehydro @ git+https://github.com/CoC-MSD/SparseHydro@main" --no-deps
+          pip install "sparsehydro @ git+https://github.com/CoC-MSD/SparseHydro@v1.0.0b1" --no-deps
           pip install numpy pandas scipy pyarrow pymoo requests requests-toolbelt
           pip install -e ".[freeze]"
       - name: Application icon

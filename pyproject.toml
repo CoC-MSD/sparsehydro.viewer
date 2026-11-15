@@ -26,7 +26,7 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Hydrology",
 ]
 dependencies = [
-    "sparsehydro>=1.0.0a1",
+    "sparsehydro>=1.0.0b1",  # hours-based unit hydrographs, registries, load_extensions()
     "PySide6-Essentials>=6.7",
     "pyqtgraph>=0.13.7",
     "numpy>=1.24",
