@@ -1,0 +1,68 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  dist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build
+      - run: python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          pip install "sparsehydro @ git+https://github.com/CoC-MSD/SparseHydro@main" --no-deps
+          pip install numpy pandas scipy pyarrow pymoo requests requests-toolbelt
+          pip install -e ".[freeze]"
+      - name: Freeze
+        run: pyinstaller packaging/sparsehydro-viewer.spec --noconfirm
+      - name: Smoke test frozen build
+        run: dist\sparsehydro-viewer\sparsehydro-viewer.exe --version
+      - name: Installer
+        run: |
+          $version = python -c "import sparsehydro_viewer; print(sparsehydro_viewer.__version__)"
+          choco install innosetup --no-progress -y
+          iscc /DAppVersion=$version packaging\installer.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: packaging/Output/*.exe
+
+  publish:
+    needs: [dist, windows-installer]
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # PyPI trusted publishing
+      contents: write   # GitHub release assets
+    steps:
+      - uses: actions/download-artifact@v4
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*
+            windows-installer/*.exe

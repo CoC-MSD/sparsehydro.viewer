@@ -1,0 +1,42 @@
+name: tests
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check src tests
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+        python: ["3.10", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    env:
+      QT_QPA_PLATFORM: offscreen
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # hatch-vcs derives the version from tags
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Qt runtime libraries (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libegl1 libxkbcommon0 libgl1 libfontconfig1 libdbus-1-3
+      - name: Install sparsehydro (until it is on PyPI)
+        run: pip install "sparsehydro @ git+https://github.com/CoC-MSD/SparseHydro@dev"
+      - run: pip install -e ".[dev]" pytest-timeout
+      - run: pytest --timeout=600 --cov=sparsehydro_viewer --cov-report=xml

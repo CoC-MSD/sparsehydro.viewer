@@ -1,0 +1,31 @@
+# Conda development environment.
+#   conda env create -f environment.yml
+#   conda activate sparsehydro-viewer
+#   pip install --no-deps "sparsehydro @ git+https://github.com/CoC-MSD/SparseHydro@dev"
+#   pip install --no-deps -e .
+#
+# PySide6 must come from conda-forge here: mixing the pip PySide6 wheel with conda-forge DLLs fails
+# with "DLL load failed while importing QtCore". That is also why the two pip installs use --no-deps.
+name: sparsehydro-viewer
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.10
+  - numpy>=1.24
+  - pandas>=2.0
+  - scipy>=1.10
+  - pyarrow
+  - pyside6>=6.7
+  - pyqtgraph>=0.13.7
+  - platformdirs
+  - requests
+  - requests-toolbelt
+  - pytest
+  - pytest-qt
+  - pytest-timeout
+  - ruff
+  - pip
+  - pip:
+      - pymoo>=0.6
+      - platypus-opt>=1.0
+      - plotly>=5.0
