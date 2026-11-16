@@ -48,6 +48,15 @@ All notable changes are documented here. The format follows
   Explore has the same "Components" layer for the selected solution, and "Export trace…" (Model page)
   saves the whole record's simulation with every component, state and flux to CSV, with a `.fields.csv`
   describing each column.
+- Assess workspace: grades the working model or a calibration run's knee solution with the MSDGC calibration
+  criteria (Modeling Guidelines Rev 5.8, via `sparsehydro.studies.msdgc.scorecard`). Events are detected on the
+  chosen period with the MSDGC detector; the page shows the grade (text and symbol as well as colour, official or
+  provisional with the reasons), each criterion against its pass and fail limits, observed-vs-model scatter plots
+  of the zone and event volumes with the 1:1 line and ±10 % / ±20 % bands (Con15 events ringed, critical months
+  as triangles), the concordance correlations by month group (Table 7-3), the Qcritical levels, and the event
+  table linked to the hydrograph. Settings: period, storm or total volume, zone windows (tool v5.0.5 or
+  guidelines), event detection. Sites gain the attributes "Average dry weather flow (ODWF-A)" and "Sewer
+  system" that Qcritical needs; projects created earlier get them when opened.
 - Unit hydrographs whose bounds allow responses too slow for the calibration period are reported once, by
   process and slider: the sliders concerned are marked in the Working model panel and the Model page explains
   the problem (sparsehydro's console warning, repeated on every evaluation, is no longer printed).

@@ -185,7 +185,12 @@ ATTRIBUTE_DEFINITIONS = (
     ("shv:contributing_area", "Contributing area", "float", "acres", "Hydrology", 0.0, None, 2, (),
      "Area draining to the site (used to scale RDII models).", (), 0),
     ("shv:capacity_flow", "System capacity flow", "float", "cfs", "Hydrology", 0.0, None, 3, (),
-     "Capacity flow Qc used by the MSDGC Qcritical criterion.", (), 0),
+     "Capacity flow Qc used by the MSDGC Qcritical criterion when ODWF-A is not given.", (), 0),
+    ("shv:odwf_a", "Average dry weather flow (ODWF-A)", "float", "cfs", "Hydrology", 0.0, None, 3, (),
+     "Average observed dry weather flow; the MSDGC Qcritical levels are multiples of it "
+     "(Modeling Guidelines Vol. II Table 7-2).", (), 0),
+    ("shv:sewer_system", "Sewer system", "choice", "", "Hydrology", None, None, None, ("sanitary", "combined"),
+     "Sanitary or combined sewer system; selects the MSDGC Qcritical factor.", (), 0),
     ("shv:pipe_diameter", "Pipe diameter", "float", "in", "Asset", 0.0, None, 1, (),
      "Diameter of the monitored pipe.", (), 0),
     ("invert_elevation", "Invert elevation", "float", "ft", "Asset", None, None, 2, (),

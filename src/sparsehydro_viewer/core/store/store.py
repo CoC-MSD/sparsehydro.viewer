@@ -163,7 +163,13 @@ class ProjectStore:
             c.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             c.execute("INSERT OR REPLACE INTO meta VALUES ('created', ?)", (_now(),))
             c.executemany("INSERT OR IGNORE INTO observed_property VALUES (?, ?, ?, ?)", OBSERVED_PROPERTIES)
-            for d in ATTRIBUTE_DEFINITIONS:
+            self._seed_definitions(c)
+
+    def _seed_definitions(self, c) -> None:
+        """Add the built-in attribute definitions a project does not have yet (user edits are kept)."""
+        have = {r[0] for r in c.execute("SELECT key FROM attribute_definition")}
+        for d in ATTRIBUTE_DEFINITIONS:
+            if d[0] not in have:
                 self._insert_definition(c, AttributeDefinition(d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7],
                                                                tuple(d[8]), d[9], tuple(d[10]), bool(d[11])))
 
@@ -172,6 +178,7 @@ class ProjectStore:
             raise StoreError(f"cannot upgrade schema version {version}")
         with self.transaction() as c:  # idempotent: adds tables/views introduced without a version bump
             c.executescript(DDL)
+            self._seed_definitions(c)
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:

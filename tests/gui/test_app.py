@@ -335,3 +335,35 @@ def test_export_trace_and_explore_components(window, qtbot, sample_frame, sample
     assert len(sim.parts) == 3
     np.testing.assert_allclose(np.sum([y for _, y in sim.parts], axis=0), sim.predicted, rtol=1e-8, atol=1e-10)
     assert simulate_selection(run, sample_frame, ds.calibration, ds.validation, 0, []).parts is None
+
+
+def test_assess_page_grades_the_working_model(window, qtbot, sample_frame, sample_csv) -> None:
+    s = window.ctx.session
+    _load(window, qtbot, sample_frame, sample_csv)
+    site = s.dataset.site_iri
+    s.set_attribute(site, "shv:odwf_a", 0.4)
+    s.set_attribute(site, "shv:sewer_system", "sanitary")
+    page = next(p for p in window.pages if p.title == "Assess")
+    window.nav.setCurrentRow(window.pages.index(page))
+    assert window.toolbar.run_action.text() == "Assess"
+    page.form.set_values({"period": "whole"})
+    with qtbot.waitSignal(window.ctx.jobs.jobChanged, timeout=60000,
+                          check_params_cb=lambda job_id: window.ctx.jobs.info(job_id).state == "finished"):
+        window.toolbar.run_action.trigger()
+    qtbot.waitUntil(lambda: page.last is not None, timeout=10000)
+    res = page.last.result
+    assert res.grade in ("pass", "conditional", "fail")
+    from sparsehydro_viewer.views.assess_page import GRADE_STYLE
+
+    text, symbol, _ = GRADE_STYLE[res.grade]
+    assert f"{symbol} {text}" in page.grade.text()  # shape and words, not only colour
+    assert text in page.grade.accessibleDescription()
+    assert page.criteria.rowCount() == 6 and page.summary.rowCount() == 3 and page.qcrit.rowCount() == 4
+    assert page.events.rowCount() == len(res.events) >= 3
+    assert "rc =" in page.scatter.plots["conveyance"].titleLabel.text
+    # a point in a scatter selects its event and zooms the hydrograph to it
+    first = int(res.events.loc[res.events["included"], "event_id"].iloc[0])
+    page.scatter.eventClicked.emit(first)
+    assert page.tabs.currentIndex() == 2 and page.selected_event() == first
+    assert window.toolbar.chart.plot is page.plot
+    assert "MSDGC" in page.status_text()

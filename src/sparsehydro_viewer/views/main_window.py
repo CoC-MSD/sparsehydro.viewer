@@ -32,6 +32,7 @@ from ..resources import icon
 from ..services import CalibrationService, JobManager, LiveEvaluationService
 from ..session import Session
 from ..widgets import ParameterPanel
+from .assess_page import AssessPage
 from .calibrate_page import CalibratePage
 from .common import num_item, text_item
 from .compare_page import ComparePage
@@ -80,6 +81,7 @@ class MainWindow(QMainWindow):
         self.pages: list[Page] = [
             SitesPage(self.ctx), ModelPage(self.ctx), EventsPage(self.ctx),
             CalibratePage(self.ctx, show_explore=self.show_explore), self.explore, ComparePage(self.ctx),
+            AssessPage(self.ctx),
         ]
         self.nav.setIconSize(QSize(20, 20))
         for i, page in enumerate(self.pages):

@@ -11,7 +11,7 @@ from helpers import spec_for
 from sparsehydro_viewer.core.data import DatasetSpec, Period
 from sparsehydro_viewer.core.solvers import SolverSpec
 
-PAGES = {"Sites": 0, "Model": 1, "Events": 2, "Calibrate": 3, "Explore": 4, "Compare": 5}
+PAGES = {"Sites": 0, "Model": 1, "Events": 2, "Calibrate": 3, "Explore": 4, "Compare": 5, "Assess": 6}
 
 
 @pytest.fixture
@@ -66,6 +66,7 @@ def test_toolbar_is_the_same_everywhere_with_contextual_actions(window) -> None:
         "Calibrate": {"Use run settings", "Explore run", "Delete runs"},
         "Explore": {"Select knee", "Load into sliders"},
         "Compare": set(),
+        "Assess": set(),
     }
     for name, row in PAGES.items():
         window.nav.setCurrentRow(row)
