@@ -8,6 +8,7 @@ values, and the shared run/solution selection that links Explore and Compare.
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 import pandas as pd
@@ -33,6 +34,7 @@ class Session(QObject):
     periodsChanged = Signal()  # calibration/validation period of the current dataset
     modelChanged = Signal()
     modelRenamed = Signal()
+    defaultsChanged = Signal()  # the working model's default values (a solution applied as defaults, or none)
     parametersEdited = Signal()  # bounds / calibrate flags changed (structure, not values)
     valuesChanged = Signal(dict)  # slider values
     objectivesChanged = Signal()
@@ -252,7 +254,11 @@ class Session(QObject):
     # ------------------------------------------------------------------ model
 
     def _reset_values(self) -> None:
-        self.values = {p.name: p.value for p in CATALOG.describe_parameters(self.model_spec)}
+        """Slider values of the model: its explicit values, else the user's defaults, else the library's."""
+        spec = self.model_spec
+        explicit = {n for n, st in spec.parameters.items() if st.value is not None}
+        self.values = {p.name: (p.default if p.name in spec.defaults and p.name not in explicit else p.value)
+                       for p in CATALOG.describe_parameters(spec)}
 
     def calibrate_flags(self) -> dict[str, bool]:
         return {p.name: p.calibrate for p in self.parameter_info()}
@@ -305,6 +311,55 @@ class Session(QObject):
         self._reset_values()
         self.parametersEdited.emit()
         self.valuesChanged.emit(dict(self.values))
+
+    # -- defaults of the working model -------------------------------------------------------------
+
+    def use_solution_as_defaults(self, ref: SolutionRef | None = None) -> None:
+        """Make a solved solution the working model's defaults and current values.
+
+        :param ref: The solution; default: the primary selected one (the one last clicked in a chart).
+
+        The run's model becomes the working model when its structure differs. The values are what "reset"
+        (one parameter or all) returns to, they are carried over structure edits for the parameters that
+        remain, they are saved with the project and they start new calibrations.
+        :raises ValueError: If no solution is selected or the run has no parameter set for it.
+        """
+        ref = ref or self.selection.primary
+        run = self.run(ref.run_id) if ref is not None else None
+        if ref is None or run is None:
+            raise ValueError("Select a solution first: click one in a Pareto plot or the parallel coordinates")
+        values = run.solution_values(ref.index) if ref.generation is None \
+            else run.solution_values(ref.index, ref.generation)
+        if not values:
+            raise ValueError(f"{run.label} kept no parameter set for that solution")
+        where = f"solution #{ref.index + 1}" + ("" if ref.generation is None else f" of report {ref.generation + 1}")
+        if self.model_spec.structure_key != run.model.structure_key:
+            self.model_spec = CATALOG.prune(copy.deepcopy(run.model))
+            structure = True
+        else:
+            structure = False
+        spec = self.model_spec
+        known = {p.name for p in CATALOG.describe_parameters(spec)}
+        spec.defaults = {k: float(v) for k, v in values.items() if k in known}
+        spec.defaults_source = {"run_id": run.id, "run": run.label, "index": ref.index, "generation": ref.generation,
+                                "text": f"{run.label}, {where}"}
+        for st in spec.parameters.values():
+            st.value = None  # the defaults are the values now
+        self._reset_values()
+        self.set_dirty()
+        if structure:
+            self.modelChanged.emit()
+        self.defaultsChanged.emit()
+        self.valuesChanged.emit(dict(self.values))
+
+    def restore_library_defaults(self) -> None:
+        """Forget the user's defaults: "reset" returns to the library's values again (current values stay)."""
+        if not self.model_spec.defaults:
+            return
+        self.model_spec.defaults = {}
+        self.model_spec.defaults_source = None
+        self.set_dirty()
+        self.defaultsChanged.emit()
 
     def working_spec(self) -> ModelSpec:
         """The model spec with the current slider values baked in."""

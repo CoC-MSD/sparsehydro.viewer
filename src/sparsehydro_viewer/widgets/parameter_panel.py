@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QMenu,
     QPushButton,
     QScrollArea,
     QSlider,
@@ -225,6 +226,9 @@ class ParameterPanel(QWidget):
     boundsEdited = Signal(str, float, float)
     calibrateToggled = Signal(str, bool)
     resetRequested = Signal()
+    useSelectedRequested = Signal()  # apply the solution selected in the charts as the defaults
+    useChoiceRequested = Signal(str)  # ... or "knee" / "best:<objective>" of the selected run
+    restoreDefaultsRequested = Signal()
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -259,6 +263,31 @@ class ParameterPanel(QWidget):
         reset = QPushButton("Reset all")
         reset.setToolTip("Restore default values, bounds and calibrate flags")
         reset.clicked.connect(self.resetRequested)
+        # Defaults from a solved solution: the one clicked in a chart, or the knee / best of its run.
+        self.selected = QLabel()
+        self.selected.setObjectName("hint")
+        self.selected.setWordWrap(True)
+        self.use_selected = QToolButton()
+        self.use_selected.setText("Use selected solution as defaults")
+        self.use_selected.setToolTip("Make the solution selected in the charts (click a point of a Pareto plot or a "
+                                     "line of the parallel coordinates) the working model's values and its "
+                                     "defaults: what Reset returns to and where new calibrations start. The arrow "
+                                     "offers the knee and the best solutions of the same run.")
+        self.use_selected.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self._choice_menu = QMenu(self.use_selected)
+        self.use_selected.setMenu(self._choice_menu)
+        self.use_selected.clicked.connect(self.useSelectedRequested)
+        self.restore_defaults = QToolButton()
+        self.restore_defaults.setText("Restore library defaults")
+        self.restore_defaults.setToolTip("Forget the defaults taken from a solution; Reset returns to the "
+                                         "library's values again (the current values stay)")
+        self.restore_defaults.clicked.connect(self.restoreDefaultsRequested)
+        defaults_row = QHBoxLayout()
+        defaults_row.addWidget(self.use_selected)
+        defaults_row.addWidget(self.restore_defaults)
+        defaults_row.addStretch(1)
+        self.set_selected_solution("", False, [])
+        self.set_defaults_source("")
         top = QHBoxLayout()
         top.addWidget(self.summary, 1)
         top.addWidget(reset)
@@ -283,6 +312,8 @@ class ParameterPanel(QWidget):
         lay = QVBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
         lay.addWidget(self.context)
+        lay.addWidget(self.selected)
+        lay.addLayout(defaults_row)
         lay.addLayout(top)
         lay.addLayout(tools)
         lay.addLayout(header)
@@ -293,6 +324,34 @@ class ParameterPanel(QWidget):
     def set_context(self, html: str) -> None:
         """Explain what the sliders drive (shown above the parameters)."""
         self.context.setText(html)
+
+    def set_selected_solution(self, text: str, enabled: bool, choices: list[tuple[str, str]]) -> None:
+        """Describe the solution selected in the charts and offer it (and *choices* of its run) as defaults.
+
+        :param text: e.g. ``"run A, solution #3"``; empty when nothing is selected.
+        :param choices: ``(key, label)`` of the other solutions offered in the button's menu.
+        """
+        self._selected_text = text
+        self.use_selected.setEnabled(enabled)
+        self._choice_menu.clear()
+        for key, label in choices:
+            self._choice_menu.addAction(label).triggered.connect(
+                lambda *_, k=key: self.useChoiceRequested.emit(k))
+        self._choice_menu.setEnabled(bool(choices))
+        self._update_selected()
+
+    def set_defaults_source(self, text: str) -> None:
+        """Name where the defaults come from (empty: the library's)."""
+        self._defaults_text = text
+        self.restore_defaults.setEnabled(bool(text))
+        self._update_selected()
+
+    def _update_selected(self) -> None:
+        sel = getattr(self, "_selected_text", "")
+        src = getattr(self, "_defaults_text", "")
+        self.selected.setText(
+            f"<b>Defaults:</b> {src or 'library values'}<br><b>Selected:</b> "
+            + (sel or "no solution - click one in a Pareto plot or the parallel coordinates"))
 
     def set_parameters(self, infos: list[ParameterInfo]) -> None:
         expanded = {t: s.body.isVisible() for t, s in self.sections.items()}

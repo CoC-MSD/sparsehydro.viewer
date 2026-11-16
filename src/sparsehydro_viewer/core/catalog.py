@@ -60,11 +60,17 @@ class ModelSpec:
     :ivar root: Root of the component tree.
     :ivar parameters: Overrides by flat parameter name.
     :ivar label: Name chosen by the user (defaults to a description of the tree).
+    :ivar defaults: Default values chosen by the user (a calibrated solution applied as the model's
+        defaults), by flat parameter name; parameters not listed keep the library's default.
+    :ivar defaults_source: Where :attr:`defaults` came from: ``{"run_id", "run", "index", "generation",
+        "text"}`` (``text`` reads e.g. ``"run A, solution #3"``), or ``None``.
     """
 
     root: ComponentSpec = field(default_factory=default_tree)
     parameters: dict[str, ParameterState] = field(default_factory=dict)
     label: str = ""
+    defaults: dict[str, float] = field(default_factory=dict)
+    defaults_source: dict[str, Any] | None = None
 
     @property
     def display_label(self) -> str:
@@ -89,6 +95,7 @@ class ModelSpec:
             "label": self.label,
             "root": self.root.to_dict(),
             "parameters": {k: v.to_dict() for k, v in self.parameters.items() if v.to_dict()},
+            **({"defaults": dict(self.defaults), "defaults_source": self.defaults_source} if self.defaults else {}),
         }
 
     @classmethod
@@ -96,7 +103,9 @@ class ModelSpec:
         root = ComponentSpec.from_dict(d["root"]) if "root" in d else _legacy_root(d)
         return cls(root=root,
                    parameters={k: ParameterState.from_dict(v) for k, v in d.get("parameters", {}).items()},
-                   label=d.get("label", ""))
+                   label=d.get("label", ""),
+                   defaults={k: float(v) for k, v in (d.get("defaults") or {}).items()},
+                   defaults_source=d.get("defaults_source") if d.get("defaults") else None)
 
     @classmethod
     def of(cls, root: ComponentSpec, label: str = "") -> ModelSpec:
@@ -221,6 +230,9 @@ class ModelCatalog:
         known = set(flat_names(model))
         out = copy.deepcopy(spec)
         out.parameters = {k: v for k, v in out.parameters.items() if k in known}
+        out.defaults = {k: v for k, v in out.defaults.items() if k in known}
+        if not out.defaults:
+            out.defaults_source = None
         return out
 
     # -- description ---------------------------------------------------------
@@ -231,8 +243,9 @@ class ModelCatalog:
         return {n: float(model.read_flat_parameter(n)) for n in flat_names(model)}
 
     def describe_parameters(self, spec: ModelSpec) -> list[ParameterInfo]:
-        """Every flat parameter (vector elements included) with overrides applied."""
-        defaults = self.defaults(spec)
+        """Every flat parameter (vector elements included) with overrides applied. ``default`` is the user's
+        default (:attr:`ModelSpec.defaults`) where there is one, else the library's."""
+        defaults = {**self.defaults(spec), **spec.defaults}
         built = self.build(spec, strict=False)
         model = built.model
         names = flat_names(model)

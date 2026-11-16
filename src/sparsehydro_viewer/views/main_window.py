@@ -120,6 +120,14 @@ class MainWindow(QMainWindow):
         self.params.boundsEdited.connect(lambda n, lo, hi: session.edit_parameter(n, lower=lo, upper=hi))
         self.params.calibrateToggled.connect(lambda n, on: session.edit_parameter(n, calibrate=on))
         self.params.resetRequested.connect(session.reset_parameters)
+        self.params.useSelectedRequested.connect(lambda: self._use_as_defaults(None))
+        self.params.useChoiceRequested.connect(self._use_as_defaults)
+        self.params.restoreDefaultsRequested.connect(session.restore_library_defaults)
+        for sig in (session.solutionSelectionChanged, session.runsChanged, session.projectChanged,
+                    session.defaultsChanged, session.modelChanged):
+            sig.connect(lambda *_: self._update_defaults_controls())
+        session.defaultsChanged.connect(self._rebuild_params)
+        self._update_defaults_controls()
         session.modelChanged.connect(self._rebuild_params)
         session.projectChanged.connect(self._rebuild_params)
         session.valuesChanged.connect(self.params.set_values)
@@ -372,6 +380,55 @@ class MainWindow(QMainWindow):
             self._rebuild_params()
         else:
             self.params.set_calibrate_flags(self.ctx.session.calibrate_flags())
+
+    def _defaults_run(self):
+        """Run whose solutions are offered as defaults: that of the selected solution, else the latest."""
+        s = self.ctx.session
+        ref = s.selection.primary
+        run = s.run(ref.run_id) if ref is not None else None
+        if run is None:
+            run = next((r for r in reversed(s.project.runs) if r.has_results), None)
+        return run
+
+    def _update_defaults_controls(self) -> None:
+        """Show which solution is selected in the charts and offer it, or the knee / best of its run."""
+        from .common import objective_labels
+
+        s = self.ctx.session
+        ref = s.selection.primary
+        sel_run = s.run(ref.run_id) if ref is not None else None
+        text = ""
+        if ref is not None and sel_run is not None:
+            text = f"{sel_run.label}, solution #{ref.index + 1}" + (
+                "" if ref.generation is None else f" of report {ref.generation + 1}")
+        run = self._defaults_run()
+        choices: list[tuple[str, str]] = []
+        if run is not None:
+            labels = objective_labels(run.objective_names)
+            choices = [("knee", f"Knee (balanced) of {run.label}")]
+            choices += [(f"best:{n}", f"Best {labels.get(n, n)} of {run.label}") for n in run.objective_names]
+        self.params.set_selected_solution(text, bool(text), choices)
+        src = s.model_spec.defaults_source if s.model_spec.defaults else None
+        self.params.set_defaults_source((src or {}).get("text", "a solution") if s.model_spec.defaults else "")
+
+    def _use_as_defaults(self, choice: str | None) -> None:
+        """Apply the selected solution (*choice* ``None``) or the knee / best of its run as the defaults."""
+        from ..core.selection import SolutionRef
+
+        s = self.ctx.session
+        try:
+            if choice is None:
+                s.use_solution_as_defaults()
+            else:
+                run = self._defaults_run()
+                if run is None:
+                    return
+                index = run.best_index(choice[5:]) if choice.startswith("best:") else run.knee_index()
+                s.use_solution_as_defaults(SolutionRef(run.id, int(index)))
+        except Exception as exc:  # noqa: BLE001 - e.g. the report kept no parameter sets
+            QMessageBox.warning(self, APP_NAME, str(exc))
+            return
+        self.statusBar().showMessage(f"Working model defaults: {s.model_spec.defaults_source['text']}", 5000)
 
     def _update_param_context(self) -> None:
         s = self.ctx.session

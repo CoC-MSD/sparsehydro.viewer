@@ -8,6 +8,13 @@ All notable changes are documented here. The format follows
 
 ### Added
 
+- Working model panel: "Use selected solution as defaults" applies the solution selected in any chart (a
+  point of a Pareto plot, a line of the parallel coordinates, a point of an earlier generation) as the
+  working model's values and its defaults; the button's menu offers the knee and the best solutions of the
+  same run. The panel names the selected solution and where the defaults come from. The defaults are what
+  Reset (one parameter or all) returns to, they are kept through structure edits for the parameters that
+  remain, saved with the project, and are where new calibrations start. "Restore library defaults" removes
+  them.
 - Events: it is now clear which unit hydrographs belong to which model. Every configuration has one colour,
   shown as a swatch in the "Models to fit" list and used for its hydrographs, its unit hydrographs and its
   columns of the comparison table (solid: per event, dashed: pooled). The UH shapes tab draws the unit

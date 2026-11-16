@@ -222,7 +222,9 @@ class ModelPage(Page):
 
     def _structure_edited(self, root, renames: dict) -> None:
         s = self.ctx.session
-        spec = ModelSpec(root, parameters=apply_renames(s.model_spec.parameters, renames), label=s.model_spec.label)
+        old = s.model_spec
+        spec = ModelSpec(root, parameters=apply_renames(old.parameters, renames), label=old.label,
+                         defaults=apply_renames(old.defaults, renames), defaults_source=old.defaults_source)
         s.set_model(spec, apply_renames(s.values, renames))
 
     def _sync_from_session(self) -> None:
