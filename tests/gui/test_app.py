@@ -352,6 +352,22 @@ def test_events_page(window, qtbot, sample_frame, sample_csv) -> None:
     assert page.fit_plot.x_range()[1] - page.fit_plot.x_range()[0] > 0.9 * (t1 - t0)
     page.compare.selectRow(0)
     assert page._current_id() == int(page.compare.item(0, 0).data(Qt.ItemDataRole.UserRole))
+    # Unit hydrographs: every curve names its model and fit, in the model's colour; hidden ones stay hidden.
+    page.tabs.setCurrentIndex(1)
+    names = page.uh_toggle.names()
+    assert f"{labels[0]} (per event)" in names and f"{labels[0]} (pooled)" in names
+    assert any(n.startswith(f"{labels[1]} (pooled)") for n in names)
+    assert not any("(per event)" in n and n.startswith(labels[1]) for n in names)  # fitted pooled only
+    assert page.uh_stats.rowCount() == len(names) and page.uh_stats.item(0, 0).text() == labels[0]
+    assert not page.configs.item(0, 0).icon().isNull() and not page.compare.horizontalHeaderItem(1).icon().isNull()
+    page.uh_toggle.set_visible(f"{labels[0]} (pooled)", False)
+    page._step(1)
+    assert f"{labels[0]} (pooled)" in page.uh_toggle.hidden and f"{labels[0]} (per event)" in page.uh_toggle.names()
+    page.uh_toggle.show_all()
+    page.uh_model.setCurrentIndex(page.uh_model.findText(labels[1]))
+    assert page.uh_toggle.names() and all(n.startswith(labels[1]) for n in page.uh_toggle.names())
+    page.uh_model.setCurrentIndex(0)
+    page.tabs.setCurrentIndex(0)
     page.configs.selectRow(0)
     page._send_to_working_model()
     pooled = a.fits[0].parameters("pooled")

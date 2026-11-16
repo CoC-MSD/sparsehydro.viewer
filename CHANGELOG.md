@@ -8,6 +8,12 @@ All notable changes are documented here. The format follows
 
 ### Added
 
+- Events: it is now clear which unit hydrographs belong to which model. Every configuration has one colour,
+  shown as a swatch in the "Models to fit" list and used for its hydrographs, its unit hydrographs and its
+  columns of the comparison table (solid: per event, dashed: pooled). The UH shapes tab draws the unit
+  hydrographs of every fitted model, including each component of a composed model and pooled fits, with a
+  clickable legend named "<model> (<fit>): <component>", a selector to show one model, and a table of shape
+  statistics (time to peak, centroid, t50, t95) by model, fit and component.
 - Dataset inputs: every dataset names the rain gauge and temperature series it reads, and both can be changed
   to any rain or temperature series of the project, including a gauge at another site (pickers on the Sites
   time-series tab and above the Model page hydrograph). The series must overlap the flow record. A change

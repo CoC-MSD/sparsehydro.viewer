@@ -179,6 +179,45 @@ class ConfigFit:
                 return dict(zip(cal.param_names, map(float, cal.pareto_X[0])))
         return {}
 
+    def event_ids(self) -> list[int]:
+        """Global events fitted per event by this configuration."""
+        return [int(g.global_id) for g in self.per_event.events] if self.per_event is not None else []
+
+    def kernels(self, mode: str, global_id: int | None, dt_hours: float) -> list[Any]:
+        """Unit hydrographs of this configuration at its fitted values, as
+        :class:`~.uh.KernelCurve` s: the one curve of a unit hydrograph configuration (labelled ``""``), or
+        one per unit hydrograph component of a composed model (then a ``combined`` curve per RDII group).
+
+        :param mode: ``"per_event"`` (the set fitted to *global_id*) or ``"pooled"``.
+        :returns: ``[]`` when there is no fit for that mode and event, or the model has no unit hydrograph.
+        """
+        from dataclasses import replace
+
+        from .uh import kernel_curves
+
+        params = self.parameters(mode, global_id)
+        if not params:
+            return []
+        if self.config.uh:
+            source: Any = build_uh(self.config.uh)
+            source.initialize()
+            model = source
+        else:
+            from .catalog import CATALOG, ModelSpec
+
+            source = CATALOG.build(ModelSpec.from_dict(self.config.model or {}), strict=False)
+            model = source.model
+            if not source.uh_paths:
+                return []
+        from .catalog import flat_names
+
+        known = set(flat_names(model))
+        for k, v in params.items():
+            if k in known:
+                model.apply_flat_parameter(k, v)
+        curves = kernel_curves(source, dt_hours)
+        return [replace(c, label="") for c in curves] if self.config.uh else curves
+
 
 def _span_nse(obs: pd.DataFrame, pred: pd.DataFrame, start, end) -> float:
     sel = ((obs["datetime"] >= start) & (obs["datetime"] <= end)).to_numpy()
@@ -278,16 +317,6 @@ class EventAnalysis:
             return {}
         cal = self.summary.calibration_results[i]
         return dict(zip(cal.param_names, map(float, cal.pareto_X[0])))
-
-    def fitted_model(self, global_id: int) -> Any | None:
-        params = self.parameters(global_id)
-        if not params or not self.uh_key:
-            return None
-        m = build_uh(self.uh_key)
-        m.initialize()
-        for k, v in params.items():
-            m.apply_flat_parameter(k, v)
-        return m
 
     def members(self, global_id: int) -> list[Any]:
         return [s for s in self.sub_events if int(s.global_id) == int(global_id)]

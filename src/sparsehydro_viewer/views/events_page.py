@@ -14,7 +14,7 @@ import numpy as np
 import pandas as pd
 import pyqtgraph as pg
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QKeySequence, QShortcut
+from PySide6.QtGui import QColor, QIcon, QKeySequence, QPainter, QPixmap, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -38,8 +38,9 @@ from .. import theme
 from ..core.catalog import uh_label
 from ..core.data import epoch_seconds
 from ..core.events import MODES, EventAnalysis, EventConfig, EventOverrides, event_options, run_event_analysis
-from ..core.uh import kernel_curves
+from ..core.uh import KernelCurve
 from ..widgets import OptionForm, TimeseriesPlot
+from ..widgets.legend import ToggleLegend
 from .common import num_item, page_header, text_item
 from .context import AppContext
 from .shell.page import Page
@@ -47,6 +48,28 @@ from .shell.page import Page
 SORTS = {"Start time": ("start", False), "Total rain (largest first)": ("total_rain", True),
          "Peak flow (largest first)": ("peak_flow", True), "NSE (worst first)": ("nse", False)}
 TAB_HYDROGRAPH, TAB_UH, TAB_WEIGHTS, TAB_COMPARE = range(4)
+ALL_MODELS = "All models"
+
+
+def config_color(index: int) -> str:
+    """Colour of the configuration at *index* of the list: its hydrographs, unit hydrographs and table columns."""
+    return theme.series_color(index)
+
+
+def swatch(color: str, *, dashed: bool = False) -> QIcon:
+    """A small line sample in *color* (dashed for pooled fits), for lists and table headers."""
+    pm = QPixmap(22, 12)
+    pm.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pm)
+    painter.setPen(pg.mkPen(QColor(color), width=3, style=Qt.PenStyle.DashLine if dashed else Qt.PenStyle.SolidLine))
+    painter.drawLine(1, 6, 21, 6)
+    painter.end()
+    return QIcon(pm)
+
+
+def series_name(label: str, mode: str, component: str = "") -> str:
+    """Name of a configuration's curve, the same in every chart, table and legend of the page."""
+    return f"{label} ({MODES[mode]})" + (f": {component}" if component else "")
 
 
 class EventsPage(Page):
@@ -79,7 +102,9 @@ class EventsPage(Page):
         self.configs.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.configs.setMaximumHeight(150)
         self.configs.setToolTip("Models fitted to the events. Per event: one parameter set per global event. "
-                                "Pooled: one parameter set for all events. Double-click a name to rename it.")
+                                "Pooled: one parameter set for all events. Double-click a name to rename it. "
+                                "The colour beside a name is the colour of that model's hydrographs and unit "
+                                "hydrographs (solid: per event, dashed: pooled).")
         self.configs.setAccessibleName("Model configurations to fit")
         self.configs.itemChanged.connect(self._configs_edited)
         self.uh_choice = QComboBox()
@@ -169,6 +194,37 @@ class EventsPage(Page):
         self.uh_plot.setLabel("left", "Ordinate [1/h]")
         self.uh_plot.showGrid(x=True, y=True, alpha=0.15)
         theme.plain_axes(self.uh_plot)
+        self.uh_legend = self.uh_plot.addLegend(offset=(-10, 10), labelTextColor=theme.current().plot_fg)
+        self.uh_toggle = ToggleLegend(self.uh_legend, self)  # click a legend symbol to hide or show a shape
+        self.uh_model = QComboBox()
+        self.uh_model.setAccessibleName("Model whose unit hydrographs are shown")
+        self.uh_model.setToolTip("Show the unit hydrographs of every fitted model, or of one")
+        self.uh_model.addItem(ALL_MODELS)
+        self.uh_model.currentIndexChanged.connect(lambda *_: self._show_event())
+        self.uh_note = QLabel()
+        self.uh_note.setObjectName("hint")
+        self.uh_note.setWordWrap(True)
+        self.uh_stats = QTableWidget(0, 0)
+        self.uh_stats.setAccessibleName("Unit hydrograph shape statistics by model")
+        self.uh_stats.verticalHeader().setVisible(False)
+        self.uh_stats.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.uh_stats.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        uh_top = QWidget()
+        ut = QVBoxLayout(uh_top)
+        ut.setContentsMargins(4, 4, 4, 0)
+        r = QHBoxLayout()
+        lab = QLabel("Model")
+        lab.setBuddy(self.uh_model)
+        r.addWidget(lab)
+        r.addWidget(self.uh_model)
+        r.addWidget(self.uh_note, 1)
+        ut.addLayout(r)
+        ut.addWidget(self.uh_plot, 1)
+        self.uh_tab = QSplitter(Qt.Orientation.Vertical)
+        self.uh_tab.addWidget(uh_top)
+        self.uh_tab.addWidget(self.uh_stats)
+        self.uh_tab.setStretchFactor(0, 4)
+        self.uh_tab.setStretchFactor(1, 1)
         self.weight_plot = TimeseriesPlot(flow_label="Weight")
         self.compare = QTableWidget(0, 0)
         self.compare.verticalHeader().setVisible(False)
@@ -178,7 +234,7 @@ class EventsPage(Page):
         self.compare.setToolTip("NSE over each global event's span; select a row to zoom to that event")
         self.compare.itemSelectionChanged.connect(self._compare_selected)
         self.tabs.addTab(self.fit_plot, "1  Hydrograph")
-        self.tabs.addTab(self.uh_plot, "2  UH shapes")
+        self.tabs.addTab(self.uh_tab, "2  UH shapes")
         self.tabs.addTab(self.weight_plot, "3  Weights")
         self.tabs.addTab(self.compare, "4  Comparison")
         self.tabs.currentChanged.connect(lambda *_: self._show_event())
@@ -216,6 +272,7 @@ class EventsPage(Page):
         self._table = pd.DataFrame()
         self._configs: list[EventConfig] = []
         self._zoomed = False
+        self._kernels: dict[tuple[int, str, int | None], list[KernelCurve]] = {}  # of the current analysis
         s.projectChanged.connect(self._project_changed)
         s.datasetChanged.connect(self._dataset_changed)
         s.datasetChanged.connect(self.contextChanged)
@@ -256,7 +313,9 @@ class EventsPage(Page):
         self.configs.setRowCount(len(self._configs))
         for i, c in enumerate(self._configs):
             name = QTableWidgetItem(c.label)
-            name.setToolTip("Unit hydrograph on rain" if c.uh else "Composed model")
+            name.setIcon(swatch(config_color(i)))
+            name.setToolTip(("Unit hydrograph on rain" if c.uh else "Composed model")
+                            + "; drawn in this colour in every chart of the page")
             self.configs.setItem(i, 0, name)
             for col, on in ((1, c.per_event), (2, c.pooled)):
                 it = QTableWidgetItem()
@@ -359,6 +418,12 @@ class EventsPage(Page):
 
     def _dataset_changed(self) -> None:
         self.analysis = None
+        self._kernels.clear()
+        self._fill_uh_models()
+        self.uh_plot.clear()
+        self.uh_legend.clear()
+        self.uh_toggle.clear()
+        self.uh_stats.setRowCount(0)
         self._table = pd.DataFrame()
         self.events.clear()
         self.compare.setRowCount(0)
@@ -389,6 +454,8 @@ class EventsPage(Page):
 
         def done(a: EventAnalysis) -> None:
             self.analysis = a
+            self._kernels.clear()
+            self._fill_uh_models()
             self._table = a.event_table()
             n_ex = len(ov.deleted_global_ids)
             errors = [f"{f.config.label}: {f.error}" for f in a.fits if f.error]
@@ -523,8 +590,8 @@ class EventsPage(Page):
                 if pred is None:
                     continue
                 self.fit_plot.set_curve(f"fit:{fit.config.label}:{mode}", epoch_seconds(pred["datetime"]),
-                                        pred["Q_pred"].to_numpy(), color=theme.series_color(i), width=1.8,
-                                        dashed=mode == "pooled", name=f"{fit.config.label} ({MODES[mode]})")
+                                        pred["Q_pred"].to_numpy(), color=config_color(i), width=1.8,
+                                        dashed=mode == "pooled", name=series_name(fit.config.label, mode))
             i += 1
         primary = [s for s in a.sub_events if not s.is_bimodal]
         bimodal = [s for s in a.sub_events if s.is_bimodal]
@@ -581,27 +648,105 @@ class EventsPage(Page):
         self.fit_plot.zoom_to(t0, t1)
         self.contextChanged.emit()
 
+    def _fill_uh_models(self) -> None:
+        """Offer every fitted configuration in the UH tab's model selector, keeping the choice."""
+        a = self.analysis
+        current = self.uh_model.currentText()
+        self.uh_model.blockSignals(True)
+        self.uh_model.clear()
+        self.uh_model.addItem(ALL_MODELS)
+        for i, fit in enumerate(a.fits if a is not None else []):
+            if not fit.error:
+                self.uh_model.addItem(swatch(config_color(i)), fit.config.label)
+        self.uh_model.setCurrentIndex(max(self.uh_model.findText(current), 0))
+        self.uh_model.blockSignals(False)
+
+    def _kernel(self, a: EventAnalysis, index: int, mode: str, gid: int | None) -> list[KernelCurve]:
+        key = (index, mode, None if mode == "pooled" else gid)
+        if key not in self._kernels:
+            try:
+                self._kernels[key] = a.fits[index].kernels(mode, gid, a.dt_hours)
+            except Exception:  # noqa: BLE001 - a model whose shapes cannot be built is listed as having none
+                self._kernels[key] = []
+        return self._kernels[key]
+
     def _show_uh(self, a: EventAnalysis, gid: int | None) -> None:
-        th = theme.current()
+        """Unit hydrographs of every fitted model: one colour per model (as in the hydrograph), solid for the
+        per-event fit of the current event and dashed for the pooled fit; a model's other events are faint
+        lines of its colour. The legend and the table name the model, the fit and the component."""
         self.uh_plot.clear()
+        self.uh_legend.clear()
+        self.uh_toggle.clear()
+        chosen = self.uh_model.currentText()
         horizon = 2.0
-        for other in a.fitted_ids():
-            m = a.fitted_model(other)
-            if m is None:
+        rows: list[tuple[str, str, str, str, bool, KernelCurve]] = []  # model, fit, component, colour, dashed
+        without: list[str] = []
+        for i, fit in enumerate(a.fits):
+            if fit.error or (chosen != ALL_MODELS and fit.config.label != chosen):
                 continue
-            c = kernel_curves(m, a.dt_hours)[0]
-            is_cur = other == gid
-            horizon = max(horizon, c.time_to_mass(0.995)) if is_cur or gid is None else horizon
-            col = pg.mkColor(th.predicted if is_cur else th.muted)
-            if not is_cur:
-                col.setAlpha(70)
-            item = self.uh_plot.plot(np.r_[0, c.t_hours], np.r_[0, c.ordinates],
-                                     pen=pg.mkPen(col, width=2.6 if is_cur else 1))
-            item.setZValue(10 if is_cur else 0)
+            color = config_color(i)
+            drew = False
+            for mode in fit.config.modes:
+                dashed = mode == "pooled"
+                style = Qt.PenStyle.DashLine if dashed else Qt.PenStyle.SolidLine
+                faint = []
+                if mode == "per_event":  # the same model's other events, behind
+                    col = pg.mkColor(color)
+                    col.setAlpha(70)
+                    for other in fit.event_ids():
+                        if other == gid:
+                            continue
+                        for c in _main(self._kernel(a, i, mode, other)):
+                            faint.append(self.uh_plot.plot(np.r_[0, c.t_hours], np.r_[0, c.ordinates],
+                                                           pen=pg.mkPen(col, width=1)))
+                            if gid is None:
+                                horizon = max(horizon, c.time_to_mass(0.995))
+                curves = self._kernel(a, i, mode, gid) if (dashed or gid is not None) else []
+                multi = len(curves) > 1
+                totals: dict[str, float] = {}
+                for c in curves:
+                    if c.group and not c.label.endswith("combined"):
+                        totals[c.group] = totals.get(c.group, 0.0) + c.weight
+                first = True
+                for c in curves:
+                    member = multi and bool(c.group) and not c.label.endswith("combined")
+                    # Members of an RDII group are drawn as their share of the combined curve, so they add up.
+                    y = c.ordinates * c.weight / (totals.get(c.group) or 1.0) if member else c.ordinates
+                    name = series_name(fit.config.label, mode, c.label)
+                    item = self.uh_plot.plot(np.r_[0, c.t_hours], np.r_[0, y], name=name,
+                                             pen=pg.mkPen(color, width=1.4 if member else 2.6, style=style))
+                    item.setZValue(10)
+                    self.uh_toggle.register(name, item, *(faint if first else []))
+                    first = False
+                    horizon = max(horizon, c.time_to_mass(0.995))
+                    rows.append((fit.config.label, MODES[mode], c.label, color, dashed, c))
+                if not curves and faint:  # no event chosen: the faint lines are the model's entry
+                    name = f"{fit.config.label} ({MODES[mode]}): all events"
+                    self.uh_legend.addItem(faint[0], name)
+                    self.uh_toggle.register(name, *faint)
+                drew = drew or bool(curves) or bool(faint)
+            if not drew:
+                without.append(fit.config.label)
         self.uh_plot.setXRange(0, horizon * 1.1, padding=0)
-        title = ("Current event (highlighted) against all fitted events" if a.uh_key
-                 else "Unit hydrograph shapes are shown when the first per-event model is a unit hydrograph")
-        self.uh_plot.setTitle(title, color=th.muted)
+        self.uh_plot.enableAutoRange(axis="y")
+        note = ("Solid: fitted to the current event; dashed: pooled; faint: the model's other events."
+                if gid is not None else "Select an event to highlight its per-event shapes.")
+        if without:
+            note += " No unit hydrograph to show for: " + ", ".join(without) + "."
+        self.uh_note.setText(note)
+        keys = list(rows[0][5].stats()) if rows else []
+        self.uh_stats.clear()
+        self.uh_stats.setColumnCount(3 + len(keys))
+        self.uh_stats.setHorizontalHeaderLabels(["Model", "Fit", "Unit hydrograph", *keys])
+        self.uh_stats.setRowCount(len(rows))
+        for r, (label, mode_text, component, color, dashed, c) in enumerate(rows):
+            first_item = text_item(label)
+            first_item.setIcon(swatch(color, dashed=dashed))
+            self.uh_stats.setItem(r, 0, first_item)
+            self.uh_stats.setItem(r, 1, text_item(mode_text))
+            self.uh_stats.setItem(r, 2, text_item(component or "unit hydrograph"))
+            for k, v in enumerate(c.stats().values(), start=3):
+                self.uh_stats.setItem(r, k, num_item(float(v), "{:.3g}"))
 
     def _fill_compare(self) -> None:
         a = self.analysis
@@ -610,6 +755,11 @@ class EventsPage(Page):
         self.compare.clear()
         self.compare.setColumnCount(len(cols))
         self.compare.setHorizontalHeaderLabels(["Event"] + [f"NSE {c}" for c in cols[1:]])
+        styles = {series_name(f.config.label, m): (config_color(i), m == "pooled")
+                  for i, f in enumerate(a.fits) for m in f.config.modes}
+        for j, c in enumerate(cols[1:], start=1):  # the column's colour and line style, as in the charts
+            if c in styles:
+                self.compare.horizontalHeaderItem(j).setIcon(swatch(styles[c][0], dashed=styles[c][1]))
         self.compare.setRowCount(len(table))
         for i, row in enumerate(table.itertuples(index=False)):
             gid = row[0]
@@ -649,9 +799,16 @@ class EventsPage(Page):
             rows += [(f"NSE {c}", float(match.iloc[0][c])) for c in table.columns[1:]]
         for fit in a.fits:
             for mode in fit.config.modes:
-                rows += [(f"{fit.config.label} ({MODES[mode]}) {k}", v)
+                rows += [(f"{series_name(fit.config.label, mode)} {k}", v)
                          for k, v in fit.parameters(mode, gid).items()]
         self.details.setRowCount(len(rows))
         for i, (k, v) in enumerate(rows):
             self.details.setItem(i, 0, text_item(k))
             self.details.setItem(i, 1, num_item(v) if isinstance(v, float | int) else text_item(str(v)))
+
+
+def _main(curves: list[KernelCurve]) -> list[KernelCurve]:
+    """The curves that stand for a model's response: the combined curve of each RDII group, and every
+    unit hydrograph outside a group."""
+    grouped = {c.group for c in curves if c.group and c.label.endswith("combined")}
+    return [c for c in curves if c.label.endswith("combined") or c.group not in grouped]
