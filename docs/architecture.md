@@ -23,7 +23,8 @@ sparsehydro_viewer/
     events.py             event detection; per-event and pooled fits of several configurations; overrides
     assess.py             MSDGC assessment (sparsehydro.studies.msdgc.scorecard) on a dataset
     diagnostics.py        non-domination, AIC/BIC, complexity front, slow-response warnings
-    geometry.py           WKT and lon/lat <-> Web Mercator (no GIS dependency)
+    geometry.py           WKT (points, polygons, multipolygons with holes), point-in-polygon, lon/lat <-> Web Mercator
+    gis.py                GIS import/export of zones and sites via pyogrio/pyproj (optional `gis` extra; WKB decoded here)
     migration.py          step-based unit hydrograph parameters -> hours, applied once per project
     project.py            Project: setup in memory, written into the store on save
     store/                SQLite project file (*.shproj): schema, typed store, array codec

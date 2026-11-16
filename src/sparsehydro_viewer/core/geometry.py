@@ -70,12 +70,124 @@ def polygon_wkt(ring: list[tuple[float, float]]) -> str:
     return "POLYGON ((" + ", ".join(f"{x:.7f} {y:.7f}" for x, y in pts) + "))"
 
 
+#: A polygon is a list of rings (the outer ring first, then holes); a ring is a list of ``(lon, lat)`` with the
+#: closing vertex dropped. Areal geometries are lists of polygons (one for a POLYGON).
+Ring = list[tuple[float, float]]
+Polygons = list[list[Ring]]
+
+_TYPE = re.compile(r"^\s*([A-Za-z]+)\s*(?:ZM|Z|M)?\s*(\(.*\)|EMPTY)\s*$", re.S)
+
+
+def _nested(text: str) -> list:
+    """Parse WKT parentheses into nested lists; innermost lists hold ``(x, y)`` tuples."""
+    stack: list[list] = [[]]
+    token = ""
+    for ch in text:
+        if ch == "(":
+            stack.append([])
+        elif ch in "),":
+            if token.strip():
+                nums = token.split()
+                stack[-1].append((float(nums[0]), float(nums[1])))
+            token = ""
+            if ch == ")":
+                done = stack.pop()
+                stack[-1].append(done)
+        else:
+            token += ch
+    return stack[0][0] if stack[0] else []
+
+
+def parse_polygons(wkt: str | None) -> Polygons:
+    """Polygons (with holes) of a WKT ``POLYGON`` or ``MULTIPOLYGON``; ``[]`` for anything else."""
+    if not wkt:
+        return []
+    m = _TYPE.match(wkt)
+    if not m or m.group(2).upper() == "EMPTY":
+        return []
+    kind = m.group(1).upper()
+    try:
+        tree = _nested(m.group(2))
+    except (ValueError, IndexError):
+        return []
+    if kind == "POLYGON":
+        tree = [tree]
+    elif kind != "MULTIPOLYGON":
+        return []
+    out: Polygons = []
+    for poly in tree:
+        rings = []
+        for ring in poly:
+            ring = list(ring)
+            if len(ring) > 1 and ring[0] == ring[-1]:
+                ring.pop()
+            if len(ring) >= 3:
+                rings.append(ring)
+        if rings:
+            out.append(rings)
+    return out
+
+
+def polygons_wkt(polygons: Polygons) -> str:
+    """WKT ``POLYGON`` (one polygon) or ``MULTIPOLYGON``; rings are closed here."""
+    if not polygons:
+        raise ValueError("no polygon")
+
+    def ring(r: Ring) -> str:
+        if len(r) < 3:
+            raise ValueError("a ring needs at least three vertices")
+        return "(" + ", ".join(f"{x:.7f} {y:.7f}" for x, y in [*r, r[0]]) + ")"
+
+    def poly(p: list[Ring]) -> str:
+        return "(" + ", ".join(ring(r) for r in p) + ")"
+
+    if len(polygons) == 1:
+        return "POLYGON " + poly(polygons[0])
+    return "MULTIPOLYGON (" + ", ".join(poly(p) for p in polygons) + ")"
+
+
+def _in_ring(x: float, y: float, ring: Ring) -> bool:
+    inside = False
+    n = len(ring)
+    for i in range(n):
+        x1, y1 = ring[i]
+        x2, y2 = ring[(i + 1) % n]
+        if (y1 > y) != (y2 > y) and x < (x2 - x1) * (y - y1) / (y2 - y1) + x1:
+            inside = not inside
+    return inside
+
+
+def point_in_polygons(lon: float, lat: float, polygons: Polygons) -> bool:
+    """Whether ``(lon, lat)`` is inside any polygon and outside its holes (ray casting)."""
+    for rings in polygons:
+        if _in_ring(lon, lat, rings[0]) and not any(_in_ring(lon, lat, h) for h in rings[1:]):
+            return True
+    return False
+
+
+def spherical_area_m2(polygons: Polygons) -> float:
+    """Area on the sphere (mean Earth radius), holes subtracted; within about 0.5 % of the ellipsoidal area.
+    Used when pyproj is not installed (see :func:`sparsehydro_viewer.core.gis.area_acres`)."""
+    r = 6371008.8
+
+    def ring_area(ring: Ring) -> float:
+        total = 0.0
+        n = len(ring)
+        for i in range(n):
+            lon1, lat1 = map(math.radians, ring[i])
+            lon2, lat2 = map(math.radians, ring[(i + 1) % n])
+            total += (lon2 - lon1) * (2 + math.sin(lat1) + math.sin(lat2))
+        return abs(total) * r * r / 2
+
+    return sum(ring_area(p[0]) - sum(ring_area(h) for h in p[1:]) for p in polygons)
+
+
 def geometry_points(wkt: str | None) -> list[tuple[float, float]]:
-    """All vertices (points or polygon ring) of a geometry, for extents."""
+    """All vertices (a point, or every polygon ring) of a geometry, for extents."""
     p = parse_point(wkt)
     if p is not None:
         return [p]
-    return parse_polygon(wkt) or []
+    return [pt for poly in parse_polygons(wkt) for ring in poly for pt in ring]
 
 
 # ---------------------------------------------------------------------------
@@ -143,6 +255,7 @@ def tile_bounds(x: int, y: int, z: int) -> tuple[float, float, float, float]:
 
 
 __all__ = [
-    "MAX_LAT", "R", "WORLD", "from_mercator", "geometry_points", "ground_scale", "parse_point", "parse_polygon",
-    "point_wkt", "polygon_wkt", "tile_bounds", "tile_range", "tile_zoom", "to_mercator",
+    "MAX_LAT", "R", "WORLD", "Polygons", "Ring", "from_mercator", "geometry_points", "ground_scale", "parse_point",
+    "parse_polygon", "parse_polygons", "point_in_polygons", "point_wkt", "polygon_wkt", "polygons_wkt",
+    "spherical_area_m2", "tile_bounds", "tile_range", "tile_zoom", "to_mercator",
 ]

@@ -18,7 +18,10 @@ import pandas as pd
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
     QComboBox,
+    QDialog,
+    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QInputDialog,
@@ -166,6 +169,12 @@ class SitesPage(Page):
                                                  "zoom-selection", lambda: self.map.zoom_to(s.selected_nodes or None))
         self.basemap_action = self.action("Basemap", "Show OpenStreetMap tiles under the map (online)", "nav-sites",
                                           self._toggle_basemap, checkable=True)
+        self.gis_import_action = self.action(
+            "Import GIS layer…", "Import sewersheds (polygons) or sites (points) from a file geodatabase, shapefile, "
+                                "GeoPackage, GeoJSON or KML, with their attributes", "load-data", self.import_gis)
+        self.gis_export_action = self.action(
+            "Export to GIS…", "Save the zones or the sites (the selected ones, or all) to a GeoPackage, GeoJSON or "
+                              "shapefile", "export", self.export_gis)
         # Select tool: one button whose arrow switches between rectangle and lasso selection.
         self.select_action = self.action(
             "Select", "Select on the map: click a site or zone (Ctrl+click adds or removes), drag to select what is "
@@ -206,7 +215,8 @@ class SitesPage(Page):
             acts = [self.add_site_action, self.delete_action, None, *self.periods.actions()]
         else:  # map tools: one exclusive group together with the toolbar's Pan and Zoom box
             acts = [self.select_action, self.edit_locations_action, self.draw_zone_action, None,
-                    self.add_site_action, self.delete_action, None, self.zoom_selection_action, self.basemap_action]
+                    self.add_site_action, self.delete_action, None, self.gis_import_action, self.gis_export_action,
+                    None, self.zoom_selection_action, self.basemap_action]
         self.delete_action.setEnabled(bool(self.ctx.session.selected_nodes))
         return acts
 
@@ -214,6 +224,62 @@ class SitesPage(Page):
         """The time-series chart on its tab, the map on the Map tab (the toolbar's Pan, Zoom box, Fit all and
         Export act on it)."""
         return self.plot if self.tabs.currentIndex() == 1 else self.map
+
+    # ------------------------------------------------------------------ GIS
+
+    def import_gis(self, path: str | None = None) -> None:
+        from ..core import gis
+        from .gis_import_dialog import GisImportDialog
+
+        if not gis.available():
+            QMessageBox.information(self, "Import GIS layer", gis.MISSING)
+            return
+        dlg = GisImportDialog(self.ctx, self, path)
+        if dlg.exec() != QDialog.DialogCode.Accepted or dlg.layer is None:
+            return
+        layer, plan = dlg.result_plan()
+        self.import_gis_layer(layer, plan)
+
+    def import_gis_layer(self, layer, plan):
+        """Import an already-read layer with *plan*; select and show what was added."""
+        s = self.ctx.session
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            report = s.import_gis_layer(layer, plan)
+        finally:
+            QApplication.restoreOverrideCursor()
+        if report.added or report.updated:
+            s.select_nodes(report.added or report.updated)
+            self.tabs.setCurrentIndex(0)
+            self.map.zoom_to(report.added or report.updated)
+        msg = f"{layer.name}: {report.summary()}."
+        if report.refused:
+            QMessageBox.information(self, "Import GIS layer", msg + "\n\nNot imported:\n" + "\n".join(report.refused[:20]))
+        self.window().statusBar().showMessage(msg, 10000)
+        return report
+
+    def export_gis(self) -> None:
+        from ..core import gis
+
+        if not gis.available():
+            QMessageBox.information(self, "Export to GIS", gis.MISSING)
+            return
+        s = self.ctx.session
+        choice, ok = QInputDialog.getItem(self, "Export to GIS", "Export:", ["Zones", "Sites"], 0, False)
+        if not ok:
+            return
+        table = "zone" if choice == "Zones" else "monitoring_site"
+        path, _ = QFileDialog.getSaveFileName(self, "Export to GIS", f"{choice.lower()}.gpkg",
+                                              "GeoPackage (*.gpkg);;GeoJSON (*.geojson);;Shapefile (*.shp)")
+        if not path:
+            return
+        selected = [i for i in s.selected_nodes if (n := s.store.node(i)) is not None and n.table == table]
+        try:
+            n = gis.export_nodes(s.store, path, table, iris=selected or None)
+        except Exception as exc:  # noqa: BLE001 - shown to the user
+            QMessageBox.warning(self, "Export to GIS", f"Could not export: {exc}")
+            return
+        self.window().statusBar().showMessage(f"Exported {n} {choice.lower()} to {path}", 8000)
 
     def _set_map_tool(self, mode: str) -> None:
         self.tabs.setCurrentIndex(0)

@@ -35,7 +35,7 @@ jobs:
         run: |
           pip install "sparsehydro @ git+https://github.com/CoC-MSD/SparseHydro@v1.0.0b1" --no-deps
           pip install numpy pandas scipy pyarrow pymoo requests requests-toolbelt
-          pip install -e ".[freeze]"
+          pip install -e ".[freeze,gis]"
       - name: Application icon
         env:
           QT_QPA_PLATFORM: offscreen

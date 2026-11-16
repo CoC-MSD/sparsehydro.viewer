@@ -80,6 +80,16 @@ All notable changes are documented here. The format follows
   fainter the older they are, and a slider replays the run report by report (it follows a running calibration
   until dragged back). The convergence chart can also show the front's size and its normalised hypervolume per
   report (`core.diagnostics.front_history`, exact hypervolume up to four objectives).
+- GIS import and export of sewersheds and sites (Sites page, Map tab; optional `gis` extra with pyogrio and pyproj,
+  bundled in the Windows installer). Reads file geodatabases (choose the layer), shapefiles, GeoPackage, GeoJSON,
+  KML/KMZ and other GDAL formats and reprojects to longitude/latitude. The wizard previews the layer on a map and maps
+  its columns: the name and id columns, the zone kind (fixed or from a column), which columns become attributes
+  (name, type and unit editable), and what to do with features already in the project (skip, update, add).
+  Polygons and multipolygons (with holes) become zones, points become sites, lines are refused with a reason.
+  Sites inside a zone are linked to it (`BELONGS_TO_ZONE`) and each zone's area on the WGS84 ellipsoid is stored as
+  "Contributing area" [ac]. Zones or sites (all, or the selected ones) export to GeoPackage, GeoJSON or shapefile.
+  The map draws multipolygons and holes, and thins very large rings for drawing only. The self-test reads a small
+  layer in a projected coordinate system when the extra is installed.
 - Map tools on the standard toolbar: on the Map tab the toolbar's Pan, Zoom box, Fit all and Export act on the
   map, and with the page's Select, Edit locations and Draw zone they form one group with exactly one tool active.
   Select drags a rectangle (no Shift needed) or, from its drop-down, a free lasso; click and Ctrl+click as

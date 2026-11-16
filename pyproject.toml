@@ -38,8 +38,11 @@ dependencies = [
 report = ["plotly>=5.0"]
 # NSGA-II from pymoo, as the Windows installer ships it (Platypus's NSGA-II is the default elsewhere).
 pymoo = ["pymoo>=0.6"]
+# GIS import/export of sewersheds and sites (file geodatabase, shapefile, GeoPackage, GeoJSON, KML).
+gis = ["pyogrio>=0.7", "pyproj>=3.6"]
 dev = [
     "sparsehydro-viewer[pymoo]",  # the tests run both NSGA-II implementations
+    "sparsehydro-viewer[gis]",
     "pytest>=8",
     "pytest-qt>=4.4",
     "pytest-cov>=5",

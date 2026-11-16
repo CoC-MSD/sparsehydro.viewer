@@ -11,6 +11,8 @@ following components under their own licences.
 | NumPy, pandas, SciPy | BSD-3-Clause | |
 | pymoo | Apache-2.0 | Provides NSGA-II in the Windows installer (optional elsewhere; deprecated in sparsehydro). |
 | Platypus (platypus-opt) | GPL-3.0 | Installed with sparsehydro by pip and used for its optimizers (the default NSGA-II, NSGA-III, SPEA2, GDE3, IBEA, SMPSO, OMOPSO, CMA-ES). Bundling it in a distributed installer brings GPL-3.0 obligations for that build; see "Installer builds" below. |
+| pyogrio, pyproj (optional `gis` extra; in the Windows installer) | MIT | https://github.com/geopandas/pyogrio, https://github.com/pyproj4/pyproj |
+| GDAL and PROJ (bundled in the pyogrio and pyproj wheels) | MIT (GDAL: MIT/X style; PROJ: MIT) | https://gdal.org, https://proj.org; their data files travel with the libraries |
 | PyTorch | BSD-3-Clause | Currently a core dependency of sparsehydro; excluded from the installer because the viewer does not use it. |
 
 ## LGPL v3 (Qt / PySide6)

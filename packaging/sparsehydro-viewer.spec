@@ -1,13 +1,15 @@
 # PyInstaller spec: one-folder build (keeps Qt/PySide6 as replaceable shared libraries, as the LGPL expects).
 # Build:  pyinstaller packaging/sparsehydro-viewer.spec --noconfirm
 # -*- mode: python ; coding: utf-8 -*-
-from PyInstaller.utils.hooks import collect_submodules
+from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 
 hidden = collect_submodules("sparsehydro_viewer") + collect_submodules("sparsehydro") + [
     "pymoo.algorithms.moo.nsga2",
     "pymoo.operators.crossover.sbx",
     "pymoo.operators.mutation.pm",
-]
+] + collect_submodules("pyogrio")
+# GIS import (gis extra): GDAL's and PROJ's data files travel with their wheels.
+gis_data = collect_data_files("pyogrio") + collect_data_files("pyproj")
 
 # torch is a declared dependency of sparsehydro but unused by the viewer; platypus is GPL-3.0 (see
 # THIRD_PARTY_NOTICES.md); the remaining Qt modules are not used by the application.
@@ -22,7 +24,7 @@ a = Analysis(
     pathex=[],
     hiddenimports=hidden,
     excludes=excludes,
-    datas=[("../THIRD_PARTY_NOTICES.md", "."), ("../LICENSE", ".")],
+    datas=[("../THIRD_PARTY_NOTICES.md", "."), ("../LICENSE", ".")] + gis_data,
     noarchive=False,
 )
 pyz = PYZ(a.pure)

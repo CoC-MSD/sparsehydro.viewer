@@ -32,11 +32,12 @@ from ..core.geometry import (
     geometry_points,
     ground_scale,
     parse_point,
-    parse_polygon,
+    parse_polygons,
     to_mercator,
 )
 
 PICK_PX = 10  # click tolerance in pixels
+MAX_DRAWN_VERTICES = 4000  # rings longer than this are thinned for drawing (stored at full precision)
 MODES = ("select", "lasso", "pan", "zoom", "move", "draw")
 _CURSORS = {"select": Qt.CursorShape.ArrowCursor, "lasso": Qt.CursorShape.CrossCursor,
             "pan": Qt.CursorShape.OpenHandCursor, "zoom": Qt.CursorShape.CrossCursor,
@@ -173,12 +174,18 @@ class MapView(pg.PlotWidget):
         self._zones = {}
         for f in features:
             if f.kind == "zone":
-                ring = parse_polygon(f.geometry)
-                if ring:
-                    xs, ys = to_mercator([p[0] for p in ring], [p[1] for p in ring])
+                polygons = parse_polygons(f.geometry)
+                if polygons:
                     path = QPainterPath()
-                    path.addPolygon(QPolygonF([QPointF(x, y) for x, y in zip(xs, ys)]))
-                    path.closeSubpath()
+                    path.setFillRule(Qt.FillRule.OddEvenFill)  # holes stay empty
+                    for rings in polygons:
+                        for ring in rings:
+                            ring = ring[:: max(1, len(ring) // MAX_DRAWN_VERTICES)]  # drawing only
+                            rx, ry = to_mercator([p[0] for p in ring], [p[1] for p in ring])
+                            path.addPolygon(QPolygonF([QPointF(x, y) for x, y in zip(rx, ry)]))
+                            path.closeSubpath()
+                    outer = max((p[0] for p in polygons), key=len)  # label the largest part
+                    xs, ys = to_mercator([p[0] for p in outer], [p[1] for p in outer])
                     item = QGraphicsPathItem(path)
                     fill = QColor(f.color)
                     fill.setAlpha(45)

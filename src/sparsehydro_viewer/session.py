@@ -156,6 +156,17 @@ class Session(QObject):
         self.nodesStructureChanged.emit()
         return iri
 
+    def import_gis_layer(self, layer, plan):
+        """Import a GIS layer (see :func:`sparsehydro_viewer.core.gis.import_layer`) and notify views once."""
+        from .core.gis import import_layer
+
+        report = import_layer(self.project.store, layer, plan)
+        if report.added or report.updated or report.links:
+            self.set_dirty()
+            self.nodesStructureChanged.emit()
+            self.nodesChanged.emit(list(report.updated))
+        return report
+
     def delete_nodes(self, iris: list[str]) -> None:
         """Delete nodes (with their sensors' data); datasets recorded at deleted sites go too."""
         st = self.project.store

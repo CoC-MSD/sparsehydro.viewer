@@ -318,3 +318,66 @@ def test_import_dialog_into_existing_site(qtbot, sample_csv) -> None:
     dlg._sniff()
     dlg._accept()
     assert dlg.spec.site_iri == site and dlg.location is None
+
+
+# ---------------------------------------------------------------------------- GIS import
+
+
+def test_gis_import_wizard_adds_zones_with_attributes(window, qtbot, tmp_path) -> None:
+    pytest.importorskip("pyogrio")
+    pytest.importorskip("pyproj")
+    import struct
+
+    import numpy as np
+    import pyogrio.raw
+
+    from sparsehydro_viewer.core import gis
+    from sparsehydro_viewer.views.gis_import_dialog import GisImportDialog
+
+    def poly(ring) -> bytes:
+        pts = [*ring, ring[0]]
+        return struct.pack("<BIII", 1, 3, 1, len(pts)) + b"".join(struct.pack("<dd", x, y) for x, y in pts)
+
+    path = tmp_path / "sheds.gpkg"
+    rings = [[(-84.6, 39.0), (-84.3, 39.0), (-84.3, 39.3)], [(-84.2, 39.0), (-84.1, 39.0), (-84.1, 39.1)]]
+    pyogrio.raw.write(str(path), np.array([poly(r) for r in rings], dtype=object),
+                      [np.array(["North", "South"], dtype=object), np.array(["S1", "S2"], dtype=object),
+                       np.array([0.3, 0.4])], ["NAME", "SHED_ID", "IMPERV"], driver="GPKG", geometry_type="Polygon",
+                      crs="EPSG:4326", layer="sewersheds")
+    page = window.pages[0]
+    s = window.ctx.session
+    site = s.add_node("monitoring_site", "Meter", geometry="POINT (-84.4 39.1)")
+    dlg = GisImportDialog(window.ctx, page, str(path))
+    qtbot.addWidget(dlg)
+    qtbot.waitUntil(lambda: dlg.layer is not None, timeout=10000)
+    assert dlg.layers.currentData() == "sewersheds" and "2 features: polygons" in dlg.summary.text()
+    assert dlg.label_field.currentData() == "NAME" and dlg.id_field.currentData() == "SHED_ID"
+    assert len(dlg.preview.features) == 2
+    rows = {dlg.columns.item(r, 1).text(): r for r in range(dlg.columns.rowCount())}
+    assert list(rows) == ["NAME", "SHED_ID", "IMPERV"]  # name and id columns are listed, unticked
+    dlg.columns.item(rows["IMPERV"], 2).setText("Impervious fraction")  # rename the attribute
+    layer, plan = dlg.result_plan()
+    assert [(c.field, c.label, c.value_type) for c in plan.columns] == [("IMPERV", "Impervious fraction", "float")]
+
+    report = page.import_gis_layer(layer, plan)
+    assert len(report.added) == 2 and report.links == 1
+    zones = {z.label: z.iri for z in s.store.nodes("zone")}
+    assert set(zones) == {"North", "South"}
+    assert s.store.attributes(zones["North"])["shv:impervious_fraction"] == pytest.approx(0.3)
+    assert s.store.edges(from_iri=site, relation="BELONGS_TO_ZONE") == [(site, zones["North"], "BELONGS_TO_ZONE")]
+    assert set(zones.values()) <= set(page.map.features) and set(s.selected_nodes) == set(zones.values())
+    assert gis.export_nodes(s.store, tmp_path / "out.geojson", "zone") == 2
+
+
+def test_gis_actions_explain_a_missing_extra(window, monkeypatch) -> None:
+    from sparsehydro_viewer.core import gis
+
+    shown = []
+    monkeypatch.setattr(gis, "available", lambda: False)
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: shown.append(a[2]))
+    page = window.pages[0]
+    page.import_gis()
+    page.export_gis()
+    assert shown == [gis.MISSING, gis.MISSING]
+    texts = [a.text() for a in page.context_actions() if a is not None]
+    assert "Import GIS layer…" in texts and "Export to GIS…" in texts

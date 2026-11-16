@@ -202,6 +202,34 @@ def _project_roundtrip(frame, folder: Path) -> str:
     return f"saved and reopened {path.name} ({path.stat().st_size // 1024} KiB)"
 
 
+def _gis(folder: Path) -> str:
+    """Write and read back a small layer in a projected CRS: exercises GDAL, its drivers and PROJ's data."""
+    import struct
+
+    import numpy as np
+
+    from .core import gis
+
+    if not gis.available():
+        raise ModuleNotFoundError("No module named 'pyogrio'", name="pyogrio")
+    import pyogrio.raw
+
+    path = folder / "selftest.gpkg"
+    ring = [(1400000.0, 400000.0), (1410000.0, 400000.0), (1410000.0, 410000.0), (1400000.0, 400000.0)]
+    wkb = struct.pack("<BIII", 1, 3, 1, len(ring)) + b"".join(struct.pack("<dd", x, y) for x, y in ring)
+    pyogrio.raw.write(str(path), np.array([wkb], dtype=object), [np.array(["zone"], dtype=object)], ["name"],
+                      driver="GPKG", geometry_type="Polygon", crs="EPSG:3735", layer="zones")
+    layer = gis.read_layer(path, "zones")
+    if layer.kind != "zone" or layer.features[0].wkt is None:
+        raise AssertionError(f"read back {layer.kind}")
+    lon, lat = gis.parse_polygons(layer.features[0].wkt)[0][0][0]
+    if not (-90 < lon < -80 and 35 < lat < 45):  # Ohio State Plane South -> Ohio
+        raise AssertionError(f"reprojection gave {lon:.3f}, {lat:.3f}")
+    import pyogrio
+
+    return f"GeoPackage written and read, reprojected EPSG:3735 -> 4326 (GDAL {pyogrio.__gdal_version_string__})"
+
+
 def _main_window() -> str:
     import os
 
@@ -240,6 +268,7 @@ def run_self_test(report: str | Path) -> int:
             _calibration_worker(small, "scipy", {"method": "Nelder-Mead", "maxiter": 20}))
     with tempfile.TemporaryDirectory() as tmp:
         r.check("project file", lambda: _project_roundtrip(frame, Path(tmp)))
+        r.check("GIS import", lambda: _gis(Path(tmp)), optional=True)
     r.check("main window", _main_window)
     verdict = "PASSED" if not r.failed else f"FAILED ({r.failed} checks)"
     text = "\n".join([f"sparsehydro-viewer self-test: {verdict}", *r.lines, ""])
