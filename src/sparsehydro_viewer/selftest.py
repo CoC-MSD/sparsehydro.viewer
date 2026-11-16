@@ -19,8 +19,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-#: Solvers whose absence is reported but does not fail the self-test.
-OPTIONAL_SOLVER_MODULES = {"platypus"}
+#: Packages whose absence is reported but does not fail the self-test (one NSGA-II implementation is enough).
+OPTIONAL_SOLVER_MODULES = {"platypus", "pymoo"}
 
 
 def synthetic_frame(days: int = 6, step_min: int = 15) -> Any:
@@ -125,6 +125,15 @@ def _composed_models(frame) -> str:
     return ", ".join(out)
 
 
+def _multi_objective_available() -> str:
+    from .core.solvers import SOLVERS
+
+    names = [e.label for e in SOLVERS.entries() if e.multi_objective]
+    if not names:
+        raise RuntimeError("no multi-objective optimizer is installed (Platypus or pymoo)")
+    return f"default {SOLVERS.get(SOLVERS.default().name).label}; available: {', '.join(names)}"
+
+
 def _calibration_worker(frame, solver: str, options: dict[str, Any]) -> Callable[[], str]:
     """A tiny calibration in a spawned worker process, as the Calibrate page runs it."""
 
@@ -138,6 +147,8 @@ def _calibration_worker(frame, solver: str, options: dict[str, Any]) -> Callable
         from .core.solvers import SOLVERS, SolverSpec
 
         entry = SOLVERS.get(solver)
+        if not entry.available:
+            raise ModuleNotFoundError(f"No module named {entry.requires!r}", name=entry.requires)
         SOLVERS.build(SolverSpec(solver, options))  # import errors surface here, in this process
         objectives = [ObjectiveSpec("rmse").to_dict()]
         if entry.multi_objective:
@@ -218,11 +229,13 @@ def run_self_test(report: str | Path) -> int:
     r.check("unit hydrographs", lambda: _components(frame))
     r.check("composed models and traces", lambda: _composed_models(frame))
     small = frame.iloc[:400].reset_index(drop=True)
-    r.check("calibration worker, NSGA-II (pymoo)",
-            _calibration_worker(small, "nsga2", {"pop_size": 8, "n_gen": 3}))
+    # One of the two NSGA-II implementations is enough: Platypus (pip installs) or pymoo (Windows installer).
+    r.check("multi-objective optimizer installed", _multi_objective_available)
     r.check("calibration worker, NSGA-II (Platypus)",
             _calibration_worker(small, "platypus-nsga2", {"n_evaluations": 40, "record_frequency": 10}),
             optional=True)
+    r.check("calibration worker, NSGA-II (pymoo)",
+            _calibration_worker(small, "nsga2", {"pop_size": 8, "n_gen": 3}), optional=True)
     r.check("calibration worker, SciPy",
             _calibration_worker(small, "scipy", {"method": "Nelder-Mead", "maxiter": 20}))
     with tempfile.TemporaryDirectory() as tmp:

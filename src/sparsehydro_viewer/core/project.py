@@ -27,7 +27,7 @@ from .data import DatasetSpec, load_dataset
 from .migration import UH_SCHEMA
 from .objectives import DEFAULT_OBJECTIVES, ObjectiveSpec
 from .runs import RunRecord
-from .solvers import SolverSpec
+from .solvers import SOLVERS, SolverSpec
 from .store import ProjectStore, StoreError
 
 SUFFIX = ".shproj"
@@ -44,7 +44,7 @@ class Project:
     datasets: list[DatasetSpec] = field(default_factory=list)
     models: list[ModelSpec] = field(default_factory=list)
     objectives: list[ObjectiveSpec] = field(default_factory=lambda: list(DEFAULT_OBJECTIVES))
-    solver: SolverSpec = field(default_factory=lambda: SolverSpec("nsga2"))
+    solver: SolverSpec = field(default_factory=lambda: SOLVERS.default())
     runs: list[RunRecord] = field(default_factory=list)
     ui_state: dict[str, Any] = field(default_factory=dict)
     store: ProjectStore = field(default_factory=ProjectStore.memory, repr=False, compare=False)
@@ -156,12 +156,20 @@ class Project:
             name=store.setting("name", path.stem), path=path, datasets=datasets,
             models=[ModelSpec.from_dict(json.loads(r["spec"])) for r in store.rows("model_spec")],
             objectives=[ObjectiveSpec.from_dict(x) for x in store.setting("objectives", [])] or list(DEFAULT_OBJECTIVES),
-            solver=SolverSpec.from_dict(store.setting("solver")) if store.setting("solver") else SolverSpec("nsga2"),
+            solver=SolverSpec.from_dict(store.setting("solver")) if store.setting("solver") else SOLVERS.default(),
             runs=runs, ui_state=store.setting("ui_state", {}), store=store,
         )
         if int(store.setting("uh_schema", 1)) < UH_SCHEMA:
             project._migrate_uh()
+        project._use_installed_solver()
         return project
+
+    def _use_installed_solver(self) -> None:
+        """Switch the project's solver to one installed here (e.g. a project from a pip installation opened with
+        the Windows installer, which has pymoo's NSGA-II instead of Platypus). Runs keep their record."""
+        self.solver, note = SOLVERS.usable(self.solver)
+        if note:
+            self.import_warnings.append(f"Optimizer: {note}.")
 
     def _migrate_uh(self) -> None:
         """Convert step-based unit hydrograph parameters (projects saved before the hours-based library)."""
@@ -179,7 +187,7 @@ class Project:
             name=d.get("name", folder.name),
             models=[ModelSpec.from_dict(x) for x in d.get("models", [])],
             objectives=[ObjectiveSpec.from_dict(x) for x in d.get("objectives", [])] or list(DEFAULT_OBJECTIVES),
-            solver=SolverSpec.from_dict(d["solver"]) if d.get("solver") else SolverSpec("nsga2"),
+            solver=SolverSpec.from_dict(d["solver"]) if d.get("solver") else SOLVERS.default(),
             runs=[RunRecord.from_meta(x, folder / "runs" / f"{x['id']}.npz") for x in d.get("runs", [])],
             ui_state=d.get("ui_state", {}), imported_from=folder,
         )
@@ -191,6 +199,7 @@ class Project:
                 project.import_warnings.append(f"{spec.name}: {exc}")
                 project.upsert_dataset(spec)
         project._migrate_uh()  # folder projects all predate hours-based unit hydrographs
+        project._use_installed_solver()
         return project
 
     @staticmethod

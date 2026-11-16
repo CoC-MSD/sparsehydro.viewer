@@ -36,7 +36,10 @@ dependencies = [
 
 [project.optional-dependencies]
 report = ["plotly>=5.0"]
+# NSGA-II from pymoo, as the Windows installer ships it (Platypus's NSGA-II is the default elsewhere).
+pymoo = ["pymoo>=0.6"]
 dev = [
+    "sparsehydro-viewer[pymoo]",  # the tests run both NSGA-II implementations
     "pytest>=8",
     "pytest-qt>=4.4",
     "pytest-cov>=5",

@@ -80,6 +80,12 @@ All notable changes are documented here. The format follows
   fainter the older they are, and a slider replays the run report by report (it follows a running calibration
   until dragged back). The convergence chart can also show the front's size and its normalised hypervolume per
   report (`core.diagnostics.front_history`, exact hypervolume up to four objectives).
+- Optimizers follow what is installed: NSGA-II from Platypus is the default; where Platypus is absent (the
+  Windows installer, which leaves out GPL code) NSGA-II from pymoo is offered instead, and unavailable optimizers
+  are not listed. Projects and run settings naming an NSGA-II that is not installed switch to the other one at
+  the same evaluation budget (population x generations), with a note; other missing optimizers fall back to the
+  default. pymoo is an optional extra (`sparsehydro-viewer[pymoo]`, in `dev`), following sparsehydro, which
+  makes it optional and deprecates its pymoo solver. The self-test requires one multi-objective optimizer.
 - OMOPSO (Platypus) optimizer: multi-objective particle swarm with an ε-dominance archive; options for swarm and
   leader sizes, ε (one value for all objectives), mutation probability, evaluations, seed and report interval.
 - Accessibility and finish: every control has an accessible name for screen readers and, where its purpose is not

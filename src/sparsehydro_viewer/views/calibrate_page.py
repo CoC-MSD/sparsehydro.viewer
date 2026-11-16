@@ -235,12 +235,14 @@ class CalibratePage(Page):
 
     def _load_from_session(self) -> None:
         self._sync_objectives()
-        spec = self.ctx.session.solver
+        spec, note = SOLVERS.usable(self.ctx.session.solver)
+        if note:  # e.g. a run's settings name an optimizer that is not installed here
+            self.ctx.session.set_solver(spec)
         self.solver.blockSignals(True)
         self.solver.setCurrentIndex(max(0, self.solver.findData(spec.name)))
         self.solver.blockSignals(False)
         entry = SOLVERS.get(self.solver.currentData())
-        self.solver_desc.setText(entry.description)
+        self.solver_desc.setText(entry.description + (f"\n\nNote: {note}." if note else ""))
         self.solver_form.set_specs(entry.options, spec.options)
         self._fill_table()
         self._fill_monitor_box()

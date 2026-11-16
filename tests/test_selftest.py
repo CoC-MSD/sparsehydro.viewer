@@ -14,7 +14,8 @@ def test_self_test_passes_and_writes_a_report(tmp_path, qapp) -> None:
     text = report.read_text(encoding="utf-8")
     assert code == 0, text
     assert text.startswith("sparsehydro-viewer self-test: PASSED")
-    for check in ("unit hydrographs", "calibration worker, NSGA-II (pymoo)", "project file", "main window"):
+    for check in ("unit hydrographs", "multi-objective optimizer installed", "calibration worker, NSGA-II (pymoo)",
+                  "project file", "main window"):
         assert f"] {check} (" in text
 
 

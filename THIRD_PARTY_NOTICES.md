@@ -9,8 +9,8 @@ following components under their own licences.
 | pyqtgraph | MIT | https://github.com/pyqtgraph/pyqtgraph |
 | sparsehydro | MIT | https://github.com/CoC-MSD/SparseHydro |
 | NumPy, pandas, SciPy | BSD-3-Clause | |
-| pymoo | Apache-2.0 | |
-| Platypus (platypus-opt) | GPL-3.0 | Optional at runtime: only the Platypus-based optimizers use it. Bundling it in a distributed installer brings GPL-3.0 obligations for that build; see "Installer builds" below. |
+| pymoo | Apache-2.0 | Provides NSGA-II in the Windows installer (optional elsewhere; deprecated in sparsehydro). |
+| Platypus (platypus-opt) | GPL-3.0 | Installed with sparsehydro by pip and used for its optimizers (the default NSGA-II, NSGA-III, SPEA2, GDE3, IBEA, SMPSO, OMOPSO, CMA-ES). Bundling it in a distributed installer brings GPL-3.0 obligations for that build; see "Installer builds" below. |
 | PyTorch | BSD-3-Clause | Currently a core dependency of sparsehydro; excluded from the installer because the viewer does not use it. |
 
 ## LGPL v3 (Qt / PySide6)
@@ -22,6 +22,8 @@ application folder with your own builds of the same major version.
 ## Installer builds
 
 `packaging/sparsehydro-viewer.spec` excludes `platypus` by default, so the Windows installer contains
-only permissively licensed and LGPL components; the Platypus optimizers then report that the package
-is missing. Builds that need them can remove the exclusion, and must then be distributed under
-terms compatible with the GPL-3.0.
+only permissively licensed and LGPL components. Its optimizers are NSGA-II from pymoo (Apache-2.0) and
+SciPy; the Platypus optimizers are not listed. Projects saved with Platypus NSGA-II open with pymoo's
+NSGA-II at the same evaluation budget, and the reverse on pip installations. Builds that need the
+Platypus optimizers can remove the exclusion, and must then be distributed under terms compatible with
+the GPL-3.0.

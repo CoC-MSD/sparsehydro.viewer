@@ -43,6 +43,17 @@ class SolverEntry:
     supports_callback: bool
     options: tuple[OptionSpec, ...]
     factory: Callable[[dict[str, Any], Callback | None], Any]
+    #: Package the solver needs (``platypus`` is GPL-3.0 and left out of the default Windows installer; ``pymoo``
+    #: is optional in sparsehydro).
+    requires: str = ""
+
+    @property
+    def available(self) -> bool:
+        if not self.requires:
+            return True
+        import importlib.util
+
+        return importlib.util.find_spec(self.requires) is not None
 
 
 _SEED = OptionSpec("seed", "int", 42, doc="Random seed; fixed seeds make runs reproducible.", minimum=0)
@@ -56,6 +67,10 @@ def _create(registry_name: str, **kwargs: Any) -> Any:
 
 
 def _nsga2(o: dict[str, Any], cb: Callback | None) -> Any:
+    import warnings
+
+    # Deprecated in sparsehydro, but the viewer offers it on purpose where Platypus is not installed.
+    warnings.filterwarnings("ignore", message="NSGAIISolver", category=DeprecationWarning)
     return _create("pymoo_nsga2", pop_size=o["pop_size"], n_gen=o["n_gen"], seed=o["seed"], n_jobs=o["n_jobs"],
                    callback=cb)
 
@@ -111,28 +126,31 @@ _RECORD = OptionSpec("record_frequency", "int", 100, label="Report every", minim
 
 def _entries() -> list[SolverEntry]:
     return [
+        SolverEntry("platypus-nsga2", "NSGA-II (Platypus)",
+                    "Elitist genetic algorithm (Platypus); the default multi-objective solver.", True, True,
+                    (_EVALS, _SEED, _RECORD), _platypus("NSGAII"), requires="platypus"),
         SolverEntry(
-            "nsga2", "NSGA-II (pymoo)", "Elitist genetic algorithm; the default multi-objective solver.", True, True,
+            "nsga2", "NSGA-II (pymoo)",
+            "Elitist genetic algorithm (pymoo); offered where Platypus is not installed, e.g. the Windows "
+            "installer. Deprecated in sparsehydro.", True, True,
             (OptionSpec("pop_size", "int", 50, label="Population", minimum=4, maximum=10_000),
              OptionSpec("n_gen", "int", 40, label="Generations", minimum=1, maximum=100_000),
              _SEED,
              OptionSpec("n_jobs", "int", 1, label="Parallel workers", minimum=1, maximum=64,
                         doc="Processes used to evaluate each population.")),
-            _nsga2,
+            _nsga2, requires="pymoo",
         ),
-        SolverEntry("platypus-nsga2", "NSGA-II (Platypus)", "NSGA-II as implemented in Platypus.", True, True,
-                    (_EVALS, _SEED, _RECORD), _platypus("NSGAII")),
         SolverEntry("platypus-nsga3", "NSGA-III (Platypus)", "Reference-point NSGA for 3+ objectives.", True, True,
-                    (_EVALS, _SEED, _RECORD), _platypus("NSGAIII")),
+                    (_EVALS, _SEED, _RECORD), _platypus("NSGAIII"), requires="platypus"),
         SolverEntry("platypus-spea2", "SPEA2 (Platypus)", "Strength Pareto evolutionary algorithm.", True, True,
-                    (_EVALS, _SEED, _RECORD), _platypus("SPEA2")),
+                    (_EVALS, _SEED, _RECORD), _platypus("SPEA2"), requires="platypus"),
         SolverEntry("platypus-gde3", "GDE3 (Platypus)", "Generalised differential evolution.", True, True,
-                    (_EVALS, _SEED, _RECORD), _platypus("GDE3")),
+                    (_EVALS, _SEED, _RECORD), _platypus("GDE3"), requires="platypus"),
         SolverEntry("platypus-ibea", "IBEA (Platypus)", "Indicator-based evolutionary algorithm.", True, True,
-                    (_EVALS, _SEED, _RECORD), _platypus("IBEA")),
+                    (_EVALS, _SEED, _RECORD), _platypus("IBEA"), requires="platypus"),
         SolverEntry("smpso", "SMPSO (Platypus)", "Speed-constrained multi-objective particle swarm.", True, True,
                     (OptionSpec("swarm_size", "int", 100, label="Swarm size", minimum=4), _EVALS, _SEED, _RECORD),
-                    _smpso),
+                    _smpso, requires="platypus"),
         SolverEntry(
             "omopso", "OMOPSO (Platypus)",
             "Multi-objective particle swarm with an ε-dominance archive: the front keeps one solution per ε-box, "
@@ -148,7 +166,7 @@ def _entries() -> list[SolverEntry]:
                         doc="Chance of mutating each particle at each iteration (Platypus default 0.1); the "
                             "mutation's size shrinks as the evaluation budget is used up."),
              _EVALS, _SEED, _RECORD),
-            _OMOPSO,
+            _OMOPSO, requires="platypus",
         ),
         SolverEntry(
             "scipy", "SciPy (single objective)",
@@ -171,9 +189,13 @@ def _entries() -> list[SolverEntry]:
              OptionSpec("multi_start", "int", 1, label="Starts", minimum=1, maximum=64,
                         doc="Independent restarts; the best result is kept."),
              _SEED),
-            _cmaes,
+            _cmaes, requires="platypus",
         ),
     ]
+
+
+#: Preferred solvers, in order, when a project names none or one that is not installed.
+_DEFAULTS = ("platypus-nsga2", "nsga2", "scipy")
 
 
 class SolverCatalog:
@@ -186,8 +208,39 @@ class SolverCatalog:
         except KeyError:
             raise KeyError(f"Unknown solver {name!r}; known: {list(self._entries)}") from None
 
-    def entries(self) -> list[SolverEntry]:
-        return list(self._entries.values())
+    def entries(self, *, available_only: bool = True) -> list[SolverEntry]:
+        """Solvers in display order; by default only those whose package is installed."""
+        return [e for e in self._entries.values() if e.available or not available_only]
+
+    def default(self) -> SolverSpec:
+        """The preferred available solver: Platypus NSGA-II, else pymoo NSGA-II, else SciPy."""
+        name = next((n for n in _DEFAULTS if self._entries[n].available), "scipy")
+        return SolverSpec(name)
+
+    def usable(self, spec: SolverSpec | None) -> tuple[SolverSpec, str]:
+        """*spec* if its solver is installed; otherwise the closest available one and a note saying so.
+
+        The two NSGA-II implementations convert into each other (population x generations <-> evaluations,
+        same seed), so projects move between pip installations (Platypus) and the Windows installer (pymoo).
+        """
+        if spec is not None and spec.name in self._entries and self._entries[spec.name].available:
+            return spec, ""
+        missing = "no solver" if spec is None else (
+            f"{self._entries[spec.name].label} is not installed" if spec.name in self._entries
+            else f"unknown solver {spec.name!r}")
+        o = dict(spec.options) if spec is not None else {}
+        seed = {"seed": o["seed"]} if "seed" in o else {}
+        if spec is not None and spec.name == "nsga2" and self._entries["platypus-nsga2"].available:
+            evals = int(o.get("pop_size", 50)) * int(o.get("n_gen", 40))
+            return SolverSpec("platypus-nsga2", {"n_evaluations": evals, **seed}), \
+                f"{missing}; using NSGA-II (Platypus) with {evals} evaluations"
+        if spec is not None and spec.name == "platypus-nsga2" and self._entries["nsga2"].available:
+            pop = 50
+            gens = max(1, int(o.get("n_evaluations", 2000)) // pop)
+            return SolverSpec("nsga2", {"pop_size": pop, "n_gen": gens, **seed}), \
+                f"{missing}; using NSGA-II (pymoo), population {pop} for {gens} generations"
+        fallback = self.default()
+        return fallback, f"{missing}; using {self._entries[fallback.name].label}"
 
     def build(self, spec: SolverSpec, callback: Callback | None = None) -> Any:
         entry = self.get(spec.name)
