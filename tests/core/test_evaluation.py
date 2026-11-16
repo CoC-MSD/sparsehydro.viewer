@@ -138,3 +138,24 @@ def test_fit_statistics_penalise_parameters() -> None:
     p = o + 0.05
     s3, s10 = fit_statistics(o, p, 3), fit_statistics(o, p, 10)
     assert s3["NSE"] == s10["NSE"] and s10["AIC"] - s3["AIC"] == pytest.approx(14.0)
+
+
+def test_slow_unit_hydrograph_bounds_are_reported_by_process_and_slider(short_frame) -> None:
+    import warnings
+
+    from sparsehydro_viewer.core.catalog import ParameterState
+    from sparsehydro_viewer.core.processes import ProcessDesign, to_tree
+
+    spec = ModelSpec(to_tree(ProcessDesign(routing=["rtk-triangle", "gamma-uh"])))
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")  # the library's console warning no longer escapes
+        ev = Evaluator(spec, short_frame, OBJS[:1], Period())
+    slow = {r.label: r for r in ev.slow_responses}
+    assert slow, "the default bounds allow responses slower than a one-week record"
+    r = next(iter(slow.values()))
+    assert r.record_hours == pytest.approx(7 * 24, rel=0.01) and r.median_hours > r.record_hours / 2
+    assert set(r.parameters) <= set(ev.parameter_names) and "UH" in r.label and "h to deliver" in r.message()
+    # tighter upper bounds on the flagged sliders clear the note
+    tight = ModelSpec(spec.root, {p: ParameterState(upper=2.0 if p.endswith(("_K", "_alpha")) else 6.0)
+                                  for r in ev.slow_responses for p in r.parameters})
+    assert Evaluator(tight, short_frame, OBJS[:1], Period()).slow_responses == []

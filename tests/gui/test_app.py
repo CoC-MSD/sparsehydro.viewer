@@ -297,3 +297,41 @@ def test_views_and_widgets_do_not_import_sparsehydro() -> None:
             if "import sparsehydro\n" in text or "from sparsehydro." in text or "from sparsehydro import" in text:
                 offenders.append(f.name)
     assert offenders == []
+
+
+def test_export_trace_and_explore_components(window, qtbot, sample_frame, sample_csv, tmp_path) -> None:
+    import pandas as pd
+
+    from sparsehydro_viewer.core.catalog import CATALOG, ModelSpec
+    from sparsehydro_viewer.core.processes import ProcessDesign, to_tree
+    from sparsehydro_viewer.core.runs import RunRecord
+    from sparsehydro_viewer.views.explore_page import simulate_selection
+
+    s = window.ctx.session
+    _load(window, qtbot, sample_frame, sample_csv)
+    spec = ModelSpec(to_tree(ProcessDesign(routing=["rtk-triangle", "gamma-uh"], sanitary=True)))
+    with qtbot.waitSignal(window.ctx.controller.result, timeout=15000):
+        s.set_model(spec)
+    page = window.pages[1]
+    path = tmp_path / "trace.csv"
+    with qtbot.waitSignal(window.ctx.jobs.jobChanged, timeout=30000,
+                          check_params_cb=lambda job_id: window.ctx.jobs.info(job_id).state == "finished"):
+        page.export_trace(str(path))
+    table = pd.read_csv(path)
+    assert len(table) == len(sample_frame)
+    assert {"datetime", "rain", "observed", "wet.rdii_component_1 [CFS]", "wet.ia.ia_available [in]"} <= set(table)
+    meta = pd.read_csv(tmp_path / "trace.fields.csv")
+    assert set(meta["role"]) >= {"component", "state"}
+
+    # Explore: a solution's hydrograph split into its parts (sanitary + two unit hydrographs)
+    model = CATALOG.instantiate(spec)
+    names = [n for n in model.scalar_parameter_names if model.get_scalar_parameter(n).calibrate]
+    x = np.array([[s.values.get(n, model.read_flat_parameter(n)) for n in names]])
+    run = RunRecord("r1", "run", "sample", spec, list(s.objectives), None, status="finished", param_names=names,
+                    objective_names=["nash_sutcliffe"], minimize_flags=[False], pareto_X=x,
+                    pareto_F=np.array([[-0.5]]))
+    ds = s.dataset
+    sim = simulate_selection(run, sample_frame, ds.calibration, ds.validation, 0, [], components=True)
+    assert len(sim.parts) == 3
+    np.testing.assert_allclose(np.sum([y for _, y in sim.parts], axis=0), sim.predicted, rtol=1e-8, atol=1e-10)
+    assert simulate_selection(run, sample_frame, ds.calibration, ds.validation, 0, []).parts is None

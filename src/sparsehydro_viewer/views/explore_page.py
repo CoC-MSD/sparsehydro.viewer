@@ -23,6 +23,7 @@ from .. import theme
 from ..core.data import Period, epoch_seconds
 from ..core.evaluation import Evaluator
 from ..core.runs import RunRecord
+from ..core.trace import flow_parts
 from ..core.uh import KernelCurve, kernel_curves
 from ..services import LiveResult
 from ..widgets import AxisSpec, ParallelCoordinates, ParetoLayer, ParetoPlot, TimeseriesPlot, UHPreview
@@ -44,15 +45,27 @@ class _Sim:
     band: tuple[np.ndarray, np.ndarray] | None
     curves: list[KernelCurve]
     validation: dict[str, float] | None
+    #: Individual hydrographs ``(label, series)`` when requested.
+    parts: list[tuple[str, np.ndarray]] | None = None
 
 
 def simulate_selection(run: RunRecord, frame, calibration: Period, validation: Period, index: int,
-                       band_rows: list[int]) -> _Sim:
-    """Simulate solution *index* (and a band over *band_rows*) for display."""
+                       band_rows: list[int], components: bool = False) -> _Sim:
+    """Simulate solution *index* (and a band over *band_rows*) for display.
+
+    With *components*, also split the simulation into its individual hydrographs.
+    """
     ev = Evaluator(run.model, frame, run.objectives, calibration)
     ev.evaluate(run.fixed_values)
     res = ev.evaluate_vector(run.param_names, run.pareto_X[index])
     curves = kernel_curves(ev.built, ev.dt_hours)
+    parts = None
+    if components:  # before the band below changes the parameters
+        trace = ev.trace()
+        trace.setdefault(ev.predicted_key, res.predicted)
+        fields = ev.trace_fields()
+        labels = {f.name: f.label for f in fields}
+        parts = [(labels[n], y) for n, y in flow_parts(fields, trace, ev.predicted_key)]
     band = None
     rows = band_rows[:MAX_BAND]
     if len(rows) > 1:
@@ -66,7 +79,8 @@ def simulate_selection(run: RunRecord, frame, calibration: Period, validation: P
             val = vev.evaluate_vector(run.param_names, run.pareto_X[index]).objectives
         except ValueError:
             val = None
-    return _Sim(run.id, index, epoch_seconds(ev.datetime), ev.rain, ev.observed, res.predicted, band, curves, val)
+    return _Sim(run.id, index, epoch_seconds(ev.datetime), ev.rain, ev.observed, res.predicted, band, curves, val,
+                parts)
 
 
 class ExplorePage(Page):
@@ -85,6 +99,9 @@ class ExplorePage(Page):
                                        self._select_knee, shortcut="K")
         self.load_action = self.action("Load into sliders", "Make this run's model the working model with the "
                                                             "selected solution's values", "load-sliders", self._load)
+        self.components_action = self.action(
+            "Components", "Show the selected solution's hydrograph as the sum of its individual hydrographs",
+            "components", lambda: self._simulate(), checkable=True)
         self.best_box = QComboBox()
         self.best_box.setToolTip("Select the best solution for an objective")
         self.best_box.activated.connect(self._select_best)
@@ -164,7 +181,7 @@ class ExplorePage(Page):
     # ------------------------------------------------------------------ shell
 
     def context_actions(self):
-        return [self.knee_action, self.load_action]
+        return [self.knee_action, self.load_action, None, self.components_action]
 
     def active_chart(self):
         return self.ts
@@ -291,9 +308,10 @@ class ExplorePage(Page):
         brushed = self._brushed if 1 < len(self._brushed) < run.n_solutions else []
         cal, val = ds.calibration, ds.validation
         self._pending_job = (run.id, idx)
+        components = self.components_action.isChecked()
 
         def work(_ctx):
-            return simulate_selection(run, frame, cal, val, idx, brushed)
+            return simulate_selection(run, frame, cal, val, idx, brushed, components)
 
         self.submit_job(f"Simulate {run.label} #{idx}", work, on_done=self._show_sim)
 
@@ -308,6 +326,8 @@ class ExplorePage(Page):
         else:
             self.ts.remove_band("band")
         self.ts.set_curve("sel", sim.t, sim.predicted, color=th.selection, width=2, name=f"solution #{sim.index}")
+        self.ts.set_stack("components", sim.t, [(label, y, theme.series_color(i))
+                                                for i, (label, y) in enumerate(sim.parts or [])])
         self.uh.set_curves(sim.curves)
         F = run.display_F()[sim.index]
         labels = objective_labels(run.objective_names)

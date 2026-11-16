@@ -141,4 +141,32 @@ def state_fields(fields: list[TraceField]) -> list[TraceField]:
     return [f for f in fields if f.role in ("state", "flux") and f.name not in owners and not is_flow(f)]
 
 
-__all__ = ["TraceField", "flow_parts", "leaf_label", "state_fields", "trace_fields"]
+def trace_frame(evaluator, values: dict[str, float] | None = None):
+    """The full trace as a table: datetime, rain, observed, simulated, then every traced series.
+
+    Column headers carry units (``"wet.ia.ia_available [in]"``); a second
+    table from :func:`trace_metadata` describes each column.
+    """
+    import pandas as pd
+
+    res = evaluator.evaluate(values or {})
+    trace = evaluator.trace()
+    out = {"datetime": pd.to_datetime(evaluator.datetime), "rain": evaluator.rain,
+           "observed": evaluator.observed, f"simulated ({evaluator.predicted_key})": res.predicted}
+    for f in evaluator.trace_fields():
+        if f.name in trace:
+            out[f"{f.name} [{f.units}]" if f.units else f.name] = np.asarray(trace[f.name], float)
+    return pd.DataFrame(out)
+
+
+def trace_metadata(fields: list[TraceField]):
+    """One row per traced series: name, label, role, component_of, units, description."""
+    import pandas as pd
+
+    return pd.DataFrame([{"name": f.name, "label": f.label, "role": f.role, "component_of": f.component_of,
+                          "units": f.units, "description": f.description} for f in fields],
+                        columns=["name", "label", "role", "component_of", "units", "description"])
+
+
+__all__ = ["TraceField", "flow_parts", "leaf_label", "state_fields", "trace_fields", "trace_frame",
+           "trace_metadata"]

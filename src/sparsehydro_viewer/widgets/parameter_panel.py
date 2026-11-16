@@ -318,6 +318,23 @@ class ParameterPanel(QWidget):
     def values(self) -> dict[str, float]:
         return {n: r.value() for n, r in self.rows.items()}
 
+    def set_warnings(self, warnings: dict[str, str]) -> None:
+        """Mark rows *warnings* names (orange label, message in the bound editors' tooltips); others are cleared."""
+        color = "#D55E00"
+        for name, row in self.rows.items():
+            msg = warnings.get(name)
+            if msg == getattr(row, "_warning", None):
+                continue
+            row._warning = msg
+            row.label.setStyleSheet(f"color: {color}; font-weight: 600;" if msg else "")
+            row.hi_edit.setStyleSheet(f"border: 1px solid {color};" if msg else "")
+            row.hi_edit.setToolTip(f"Upper bound\n\n{msg}" if msg else "Upper bound")
+            base = row.label.toolTip().split("\n\n⚠", 1)[0]
+            row.label.setToolTip(f"{base}\n\n⚠ {msg}" if msg else base)
+
+    def warned(self) -> list[str]:
+        return [n for n, r in self.rows.items() if getattr(r, "_warning", None)]
+
     def update_summary(self) -> None:
         n = len(self.rows)
         k = sum(r.check.isChecked() for r in self.rows.values())

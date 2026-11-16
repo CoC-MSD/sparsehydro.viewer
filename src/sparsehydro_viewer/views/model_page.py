@@ -115,6 +115,9 @@ class ModelPage(Page):
         self.components_action = self.action(
             "Components", "Show the simulated hydrograph as the sum of its individual hydrographs (each unit "
             "hydrograph, each term of a sum)", "components", self._trace_needs_changed, checkable=True)
+        self.export_trace_action = self.action(
+            "Export trace…", "Save the whole record's simulation with every component, state and flux to CSV",
+            "export", self.export_trace)
         self.states = StatesPanel()
         self.states.link_x(self.plot.flow_plot.getViewBox())
         self.lower_tabs = QTabWidget()
@@ -155,7 +158,38 @@ class ModelPage(Page):
     # ------------------------------------------------------------------ shell
 
     def context_actions(self):
-        return [self.components_action, None, self.pin_action, self.clear_pins_action]
+        return [self.components_action, self.export_trace_action, None, self.pin_action, self.clear_pins_action]
+
+    def export_trace(self, path: str | None = None) -> None:
+        """Write the working model's trace over the whole record (and a ``.fields.csv`` describing it)."""
+        s = self.ctx.session
+        ds = s.dataset
+        if ds is None:
+            self.status.setText("Load a dataset first.")
+            return
+        if path is None:
+            from PySide6.QtWidgets import QFileDialog
+
+            name = f"{ds.name} {s.model_spec.display_label} trace.csv".replace("/", "-")
+            path, _ = QFileDialog.getSaveFileName(self, "Export trace", name, "CSV files (*.csv)")
+            if not path:
+                return
+        spec, values, objectives, frame = s.model_spec, dict(s.values), list(s.objectives), s.frame()
+
+        def work(ctx):
+            from ..core.data import Period
+            from ..core.evaluation import Evaluator
+            from ..core.trace import trace_frame, trace_metadata
+
+            ctx.progress("simulating the whole record")
+            ev = Evaluator(spec, frame, objectives, Period())
+            table = trace_frame(ev, values)
+            table.to_csv(path, index=False)
+            trace_metadata(ev.trace_fields()).to_csv(str(path).rsplit(".", 1)[0] + ".fields.csv", index=False)
+            return path
+
+        self.submit_job("Export trace", work,
+                        on_done=lambda p: self.window().statusBar().showMessage(f"Trace saved to {p}", 8000))
 
     def showEvent(self, ev) -> None:  # noqa: N802
         super().showEvent(ev)
@@ -243,9 +277,11 @@ class ModelPage(Page):
             vv = res.validation.objectives.get(name) if res.validation else None
             self.metrics.setItem(r, 2, num_item(vv))
         bad = {k: g for k, g in res.calibration.constraints.items() if g > 0}
-        self.constraints.setText(
-            "" if not bad else "<span style='color:#D55E00'>Constraint violated: "
-            + ", ".join(f"{k} (g = {g:.3g})" for k, g in bad.items()) + "</span>")
+        notes = []
+        if bad:
+            notes.append("Constraint violated: " + ", ".join(f"{k} (g = {g:.3g})" for k, g in bad.items()))
+        notes += [f"⚠ {r.message()}" for r in res.slow_responses]
+        self.constraints.setText("<br>".join(f"<span style='color:#D55E00'>{n}</span>" for n in notes))
         self._last_result = res
         dt = (now - self._last_t) if self._last_t else 0.0
         self._last_t = now

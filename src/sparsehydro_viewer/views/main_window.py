@@ -163,6 +163,9 @@ class MainWindow(QMainWindow):
             sig.connect(self._update_status)
         session.dirtyChanged.connect(lambda *_: self._update_title())
         controller.unavailable.connect(lambda msg: self.status.showMessage(msg, 5000))
+        # Sliders whose bounds allow unit hydrograph responses too slow for the calibration period.
+        controller.result.connect(lambda res: self.params.set_warnings(
+            {p: r.message() for r in getattr(res, "slow_responses", ()) for p in r.parameters}))
 
         # -- shared actions, menus and the standard toolbar ----------------------------
         self._build_actions()

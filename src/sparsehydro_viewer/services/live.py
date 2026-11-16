@@ -41,6 +41,8 @@ class LiveResult:
     trace: dict | None = None
     trace_fields: list | None = None
     output_key: str = ""
+    #: Unit hydrographs whose bounds allow responses too slow for the calibration period.
+    slow_responses: tuple = ()
 
 
 @dataclass
@@ -114,7 +116,7 @@ class _Worker(QObject):
                         log.warning("trace unavailable: %s", exc)
                 self.ready.emit(LiveResult(cal, val, self._cal.datetime, self._cal.observed, self._cal.rain,
                                            curves, self._cal.dt_hours, generation, trace, fields,
-                                           self._cal.predicted_key))
+                                           self._cal.predicted_key, tuple(self._cal.slow_responses)))
             except Exception as exc:
                 log.exception("live evaluation failed")
                 self.failed.emit(f"{type(exc).__name__}: {exc}")

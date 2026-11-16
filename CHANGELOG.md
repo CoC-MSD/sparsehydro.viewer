@@ -45,6 +45,12 @@ All notable changes are documented here. The format follows
   lists the model's states and fluxes by component (remaining initial abstraction, tank storage, soil and
   groundwater stores, snowpack, melt...) and plots the ticked ones on the hydrograph's time axis, one panel
   per unit. Both follow the sliders; the trace is computed only while one of them is on screen.
+  Explore has the same "Components" layer for the selected solution, and "Export trace…" (Model page)
+  saves the whole record's simulation with every component, state and flux to CSV, with a `.fields.csv`
+  describing each column.
+- Unit hydrographs whose bounds allow responses too slow for the calibration period are reported once, by
+  process and slider: the sliders concerned are marked in the Working model panel and the Model page explains
+  the problem (sparsehydro's console warning, repeated on every evaluation, is no longer printed).
 - Projects saved with step-based unit hydrograph parameters are converted to hours when opened (models,
   the working model and every run's Pareto set; see `core/migration.py`), and marked so it happens once.
 - Process builder (Model page): grow a model one process at a time - rainfall losses, a list of unit

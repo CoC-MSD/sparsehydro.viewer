@@ -9,6 +9,7 @@ not return.  It is used by the parameter sliders (live feedback), by Explore
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
@@ -96,12 +97,19 @@ class Evaluator:
         self.model = self.built.model
         self.predicted_key = self.built.output_key
         self.model.validate()
-        self.problem = nan_safe_problem_class()(
-            self.model,
-            CATALOG.prepare_frame(frame),
-            objectives=[OBJECTIVES.build(o) for o in self.objective_specs],
-            column_map={"observed": "stormflow", "predicted": self.predicted_key},
-        )
+        with warnings.catch_warnings():
+            # sparsehydro warns about too-slow unit hydrograph bounds on every problem it builds; the viewer
+            # reports them once, by process and slider (see slow_responses), instead of on the console.
+            warnings.filterwarnings("ignore", message=r".*response needs .* h to deliver half its volume")
+            self.problem = nan_safe_problem_class()(
+                self.model,
+                CATALOG.prepare_frame(frame),
+                objectives=[OBJECTIVES.build(o) for o in self.objective_specs],
+                column_map={"observed": "stormflow", "predicted": self.predicted_key},
+            )
+        from .diagnostics import slow_responses
+
+        self.slow_responses = slow_responses(self.built, len(frame) * self.dt_hours)
         self._minimize = np.array(self.problem.minimize_flags, dtype=bool)
         self._names = flat_names(self.model)
 

@@ -93,4 +93,67 @@ def complexity_front(points: Sequence[ComplexityPoint]) -> list[ComplexityPoint]
     return sorted((p for p, m in zip(points, mask) if m), key=lambda p: (p.n_params, p.score))
 
 
-__all__ = ["ComplexityPoint", "complexity_front", "fit_statistics", "information_criteria", "nondominated"]
+@dataclass(frozen=True)
+class SlowResponse:
+    """A unit hydrograph whose bounds allow responses slower than the data.
+
+    :ivar label: The process, as the viewer names it (e.g. ``"wet › UH 2: Gamma UH"``).
+    :ivar median_hours: Time to deliver half the volume at the upper bounds.
+    :ivar parameters: Flat names of the calibrated time and shape parameters.
+    """
+
+    label: str
+    median_hours: float
+    record_hours: float
+    parameters: tuple[str, ...]
+
+    def message(self) -> str:
+        names = ", ".join(self.parameters)
+        return (f"{self.label}: at the upper bounds of {names} the response needs {self.median_hours:.0f} h to "
+                f"deliver half its volume, but the calibration period covers {self.record_hours:.0f} h. Much of "
+                "the search range then predicts almost no flow and the optimiser can stall there; lower those "
+                "upper bounds to what is plausible for the site.")
+
+
+def slow_responses(built, record_hours: float, fraction: float = 0.5) -> list[SlowResponse]:
+    """Unit hydrographs of a built model whose search range allows responses too slow for the record.
+
+    The check is sparsehydro's (``UnitHydrographBase.slowest_median_hours``),
+    applied to each unit hydrograph with the bounds and calibrate flags its
+    parent gives it, so messages name the process and slider as the viewer
+    shows them.
+    """
+    import copy
+
+    if not record_hours > 0:
+        return []
+    parent = built.model
+    names = set(parent.scalar_parameter_names)
+    out = []
+    for label, child, prefix, _amp in built.uh_paths:
+        if not hasattr(child, "slowest_median_hours"):
+            continue
+        uh = copy.deepcopy(child)
+        if not uh.is_initialized():
+            uh.initialize()
+        for name in uh.scalar_parameter_names:
+            full = f"{prefix}{name}"
+            if full in names:
+                src = parent.get_scalar_parameter(full)
+                uh.get_scalar_parameter(name).update(lower_bound=src.lower_bound, upper_bound=src.upper_bound,
+                                                     value=min(max(src.value, src.lower_bound), src.upper_bound),
+                                                     calibrate=src.calibrate)
+        try:
+            median = float(uh.slowest_median_hours())
+        except Exception:  # noqa: BLE001 - a diagnostic never breaks the model
+            continue
+        if median > fraction * record_hours:
+            timing = [f"{prefix}{n}" for n, p in uh.timing_parameters().items()
+                      if p.calibrate and f"{prefix}{n}" in names]
+            if timing:
+                out.append(SlowResponse(label, median, float(record_hours), tuple(timing)))
+    return out
+
+
+__all__ = ["ComplexityPoint", "SlowResponse", "complexity_front", "fit_statistics", "information_criteria",
+           "nondominated", "slow_responses"]
