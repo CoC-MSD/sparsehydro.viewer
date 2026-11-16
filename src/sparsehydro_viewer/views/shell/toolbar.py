@@ -91,7 +91,10 @@ class MainToolBar(QToolBar):
             if a.menu() is not None:
                 button = self.widgetForAction(a)
                 if isinstance(button, QToolButton):
-                    button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+                    # A tool (checkable) keeps its click and shows its options on the arrow (e.g. Select:
+                    # rectangle or lasso); a plain action with a menu opens it on click.
+                    button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup if a.isCheckable()
+                                        else QToolButton.ToolButtonPopupMode.InstantPopup)
         self._context_end.setVisible(bool(self._context))
 
     def refresh(self) -> None:

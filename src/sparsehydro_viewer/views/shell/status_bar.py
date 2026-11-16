@@ -67,6 +67,10 @@ class StandardStatusBar(QStatusBar):
         if math.isnan(t) or self._chart is None:
             self.cursor.setText("")
             return
+        fmt = getattr(self._chart, "format_cursor", None)  # e.g. the map: latitude and longitude
+        if fmt is not None:
+            self.cursor.setText(fmt(t, y))
+            return
         try:
             stamp = pd.to_datetime(t, unit="s").strftime("%Y-%m-%d %H:%M")
         except (ValueError, OverflowError):

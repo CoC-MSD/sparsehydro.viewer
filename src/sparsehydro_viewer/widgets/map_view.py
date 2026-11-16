@@ -1,15 +1,18 @@
 """Map of project nodes: sites as points, zones as polygons (Web Mercator).
 
-Interaction (mode ``select``, the default):
+Exactly one interaction mode is active (:meth:`MapView.set_mode`):
 
-* click a feature to select it, Ctrl+click to add or remove it;
-* Shift+drag draws a box and selects the sites inside;
-* plain drag pans, the wheel zooms.
+* ``select`` (default) and ``lasso``: click a feature to select it, Ctrl+click to add or remove it; drag a
+  rectangle (``select``) or draw a free shape (``lasso``) to select what is inside. Sites win over the zones
+  beneath them; hold Alt to pick zones only. Esc clears the selection.
+* ``pan``: drag to move the map. ``zoom``: drag a rectangle to zoom into it.
+* ``move``: drag a site to move it (:attr:`MapView.pointMoved`); click empty map to place the selected site
+  (:attr:`MapView.placeRequested`).
+* ``draw``: click to add polygon vertices, double-click (or Enter) to finish (:attr:`MapView.polygonDrawn`).
 
-Mode ``move``: drag a site to move it (:attr:`MapView.pointMoved`); click empty
-map to place the selected site (:attr:`MapView.placeRequested`).
-Mode ``draw``: click to add polygon vertices, double-click (or Enter) to
-finish (:attr:`MapView.polygonDrawn`), Esc cancels.
+In every mode the wheel zooms and the middle button pans; Esc leaves ``move``/``draw``/``pan``/``zoom`` for
+``select``. The map offers the same navigation interface as the time-series charts (``set_mode``,
+``auto_range``, ``export_png``, ``cursorMoved``), so the application toolbar's chart tools act on it.
 """
 
 from __future__ import annotations
@@ -34,6 +37,10 @@ from ..core.geometry import (
 )
 
 PICK_PX = 10  # click tolerance in pixels
+MODES = ("select", "lasso", "pan", "zoom", "move", "draw")
+_CURSORS = {"select": Qt.CursorShape.ArrowCursor, "lasso": Qt.CursorShape.CrossCursor,
+            "pan": Qt.CursorShape.OpenHandCursor, "zoom": Qt.CursorShape.CrossCursor,
+            "move": Qt.CursorShape.SizeAllCursor, "draw": Qt.CursorShape.CrossCursor}
 
 
 @dataclass
@@ -106,6 +113,11 @@ class MapView(pg.PlotWidget):
     placeRequested = Signal(float, float)  # lon, lat
     polygonDrawn = Signal(list)  # [(lon, lat), ...]
     modeChanged = Signal(str)
+    #: Mouse over the map: Web Mercator x, y (NaN, NaN when it leaves); see :meth:`format_cursor`.
+    cursorMoved = Signal(float, float)
+    #: The map has no y axis to rescale; the toolbar disables Auto Y.
+    supports_auto_y = False
+    auto_y = False
 
     def __init__(self, parent: QWidget | None = None) -> None:
         vb = _MapViewBox()
@@ -133,6 +145,9 @@ class MapView(pg.PlotWidget):
         self._drag_marker: pg.ScatterPlotItem | None = None
         self._draft: list[tuple[float, float]] = []
         self._draft_item: pg.PlotDataItem | None = None
+        self._lasso: list[tuple[float, float]] = []
+        self._lasso_item: pg.PlotDataItem | None = None
+        self.scene().sigMouseMoved.connect(self._mouse_moved)
         self.scale_bar = _ScaleBar(self)
         self.attribution = QLabel(self)
         self.attribution.setObjectName("hint")
@@ -241,32 +256,45 @@ class MapView(pg.PlotWidget):
         self._draw_selection()
         self.selectionChanged.emit(list(sel))
 
-    def pick(self, x: float, y: float) -> str | None:
+    def pick(self, x: float, y: float, *, zones_only: bool = False) -> str | None:
         """Site within :data:`PICK_PX` pixels of view point ``(x, y)``, else a zone containing it."""
-        px = self.vb.viewPixelSize()[0] or 1.0
-        best, best_d = None, PICK_PX * px
-        for iri, (fx, fy) in self._xy.items():
-            if self.features[iri].kind != "site":
-                continue
-            d = math.hypot(fx - x, fy - y)
-            if d <= best_d:
-                best, best_d = iri, d
-        if best is not None:
-            return best
+        if not zones_only:
+            px = self.vb.viewPixelSize()[0] or 1.0
+            best, best_d = None, PICK_PX * px
+            for iri, (fx, fy) in self._xy.items():
+                if self.features[iri].kind != "site":
+                    continue
+                d = math.hypot(fx - x, fy - y)
+                if d <= best_d:
+                    best, best_d = iri, d
+            if best is not None:
+                return best
         for iri, item in self._zones.items():
             if item.path().contains(QPointF(x, y)):
                 return iri
         return None
 
+    def features_inside(self, shape: QRectF | QPolygonF, *, zones_only: bool = False) -> list[str]:
+        """Sites inside *shape* (view coordinates); with *zones_only*, the zones whose centre is inside."""
+        if isinstance(shape, QRectF):
+            def inside(x: float, y: float) -> bool:
+                return shape.contains(QPointF(x, y))
+        else:
+            def inside(x: float, y: float) -> bool:
+                return shape.containsPoint(QPointF(x, y), Qt.FillRule.OddEvenFill)
+        kind = "zone" if zones_only else "site"
+        return [i for i, (x, y) in self._xy.items() if self.features[i].kind == kind and inside(x, y)]
+
     # ------------------------------------------------------------------ modes
 
     def set_mode(self, mode: str) -> None:
-        if mode not in ("select", "move", "draw"):
+        if mode not in MODES:
             raise ValueError(mode)
         self._cancel_draft()
+        self._cancel_band()
         self.mode = mode
-        self.viewport().setCursor({"select": Qt.CursorShape.ArrowCursor, "move": Qt.CursorShape.OpenHandCursor,
-                                   "draw": Qt.CursorShape.CrossCursor}[mode])
+        self.vb.setMouseMode(pg.ViewBox.RectMode if mode == "zoom" else pg.ViewBox.PanMode)
+        self.viewport().setCursor(_CURSORS[mode])
         self.modeChanged.emit(mode)
 
     def _clicked(self, p: QPointF, modifiers, double: bool) -> None:
@@ -278,7 +306,10 @@ class MapView(pg.PlotWidget):
                 self._draft.append((x, y))
                 self._draw_draft()
             return
-        hit = self.pick(x, y)
+        if self.mode in ("pan", "zoom"):
+            return
+        zones_only = bool(modifiers & Qt.KeyboardModifier.AltModifier)
+        hit = self.pick(x, y, zones_only=zones_only)
         if self.mode == "move" and hit is None:
             lon, lat = from_mercator(x, y)
             self.placeRequested.emit(float(lon), float(lat))
@@ -286,8 +317,10 @@ class MapView(pg.PlotWidget):
         self._select([hit] if hit else [], modifiers)
 
     def _drag(self, ev, vb: pg.ViewBox) -> bool:
-        """Handle a left drag; ``False`` lets the view pan."""
+        """Handle a left drag; ``False`` lets the view box pan (``pan``) or zoom to a rectangle (``zoom``)."""
         p = vb.mapSceneToView(ev.scenePos())
+        if self.mode in ("pan", "zoom"):
+            return False
         if self.mode == "move":
             if ev.isStart():
                 start = vb.mapSceneToView(ev.buttonDownScenePos())
@@ -307,7 +340,8 @@ class MapView(pg.PlotWidget):
                 iri, self._dragging = self._dragging, None
                 self.pointMoved.emit(iri, float(lon), float(lat))
             return True
-        if self.mode == "select" and ev.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+        zones_only = bool(ev.modifiers() & Qt.KeyboardModifier.AltModifier)
+        if self.mode == "select":
             ev.accept()
             start = vb.mapSceneToView(ev.buttonDownScenePos())
             rect = QRectF(start, p).normalized()
@@ -322,13 +356,43 @@ class MapView(pg.PlotWidget):
                 self.addItem(self._band, ignoreBounds=True)
             self._band.setRect(rect)
             if ev.isFinish():
-                self.removeItem(self._band)
-                self._band = None
-                inside = [i for i, (x, y) in self._xy.items()
-                          if self.features[i].kind == "site" and rect.contains(QPointF(x, y))]
-                self._select(inside, ev.modifiers() & ~Qt.KeyboardModifier.ShiftModifier)
+                self._cancel_band()
+                self._select(self.features_inside(rect, zones_only=zones_only), ev.modifiers())
+            return True
+        if self.mode == "lasso":
+            ev.accept()
+            if ev.isStart() or not self._lasso:
+                start = vb.mapSceneToView(ev.buttonDownScenePos())
+                self._lasso = [(start.x(), start.y())]
+            self._lasso.append((p.x(), p.y()))
+            if self._lasso_item is None:
+                self._lasso_item = pg.PlotDataItem(pen=pg.mkPen(theme.current().accent, width=2,
+                                                                style=Qt.PenStyle.DashLine))
+                self.addItem(self._lasso_item, ignoreBounds=True)
+            xs = [q[0] for q in self._lasso] + [self._lasso[0][0]]
+            ys = [q[1] for q in self._lasso] + [self._lasso[0][1]]
+            self._lasso_item.setData(xs, ys)
+            if ev.isFinish():
+                shape = QPolygonF([QPointF(x, y) for x, y in self._lasso])
+                self._cancel_band()
+                self._select(self.features_inside(shape, zones_only=zones_only), ev.modifiers())
             return True
         return False
+
+    def select_lasso(self, points: list[tuple[float, float]], *, zones_only: bool = False, add: bool = False) -> None:
+        """Select what lies inside the polygon *points* (view coordinates), as a lasso drag would."""
+        shape = QPolygonF([QPointF(x, y) for x, y in points])
+        mods = Qt.KeyboardModifier.ControlModifier if add else Qt.KeyboardModifier.NoModifier
+        self._select(self.features_inside(shape, zones_only=zones_only), mods)
+
+    def _cancel_band(self) -> None:
+        if self._band is not None:
+            self.removeItem(self._band)
+            self._band = None
+        if self._lasso_item is not None:
+            self.removeItem(self._lasso_item)
+            self._lasso_item = None
+        self._lasso = []
 
     def _draw_draft(self) -> None:
         if self._draft_item is None:
@@ -357,10 +421,42 @@ class MapView(pg.PlotWidget):
     def keyPressEvent(self, ev) -> None:  # noqa: N802
         if self.mode == "draw" and ev.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
             self.finish_polygon()
-        elif ev.key() == Qt.Key.Key_Escape and self.mode != "select":
+        elif ev.key() == Qt.Key.Key_Escape and self.mode in ("select", "lasso"):
+            self._select([], Qt.KeyboardModifier.NoModifier)  # Esc clears the selection
+        elif ev.key() == Qt.Key.Key_Escape:
             self.set_mode("select")
         else:
             super().keyPressEvent(ev)
+
+    # ------------------------------------------------------------------ chart interface (toolbar tools)
+
+    def auto_range(self) -> None:
+        """Fit all features (the toolbar's Fit all)."""
+        self.zoom_to()
+
+    def set_auto_y(self, _on: bool) -> None:
+        """Not applicable to a map (kept for the toolbar's chart interface)."""
+
+    def export_png(self, path: str, width: int = 2000) -> None:
+        img = self.grab()
+        if img.width() and img.width() < width:
+            img = img.scaledToWidth(width, Qt.TransformationMode.SmoothTransformation)
+        img.save(path)
+
+    def _mouse_moved(self, pos) -> None:
+        if self.sceneBoundingRect().contains(pos):
+            p = self.vb.mapSceneToView(pos)
+            self.cursorMoved.emit(float(p.x()), float(p.y()))
+        else:
+            self.cursorMoved.emit(float("nan"), float("nan"))
+
+    def format_cursor(self, x: float, y: float) -> str:
+        """Status-bar readout: latitude and longitude under the mouse, and the selection size."""
+        lon, lat = from_mercator(x, y)
+        ns = "N" if lat >= 0 else "S"
+        ew = "E" if lon >= 0 else "W"
+        sel = f"   {len(self.selection)} selected" if self.selection else ""
+        return f"{abs(float(lat)):.5f}° {ns}, {abs(float(lon)):.5f}° {ew}{sel}"
 
     # ------------------------------------------------------------------ view
 

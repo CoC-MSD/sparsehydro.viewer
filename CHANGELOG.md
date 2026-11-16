@@ -80,6 +80,12 @@ All notable changes are documented here. The format follows
   fainter the older they are, and a slider replays the run report by report (it follows a running calibration
   until dragged back). The convergence chart can also show the front's size and its normalised hypervolume per
   report (`core.diagnostics.front_history`, exact hypervolume up to four objectives).
+- Map tools on the standard toolbar: on the Map tab the toolbar's Pan, Zoom box, Fit all and Export act on the
+  map, and with the page's Select, Edit locations and Draw zone they form one group with exactly one tool active.
+  Select drags a rectangle (no Shift needed) or, from its drop-down, a free lasso; click and Ctrl+click as
+  before; Alt picks zones only (otherwise sites win over the zones beneath them); Esc clears the selection.
+  The wheel zooms and the middle button pans in every tool. The status bar shows the latitude and longitude
+  under the mouse and how many features are selected.
 - Optimizers follow what is installed: NSGA-II from Platypus is the default; where Platypus is absent (the
   Windows installer, which leaves out GPL code) NSGA-II from pymoo is offered instead, and unavailable optimizers
   are not listed. Projects and run settings naming an NSGA-II that is not installed switch to the other one at

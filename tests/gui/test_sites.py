@@ -81,6 +81,60 @@ def test_map_move_mode_places_and_draw_mode_makes_polygon(map_view, qtbot) -> No
         map_view.set_mode("nope")
 
 
+def test_map_rectangle_and_lasso_selection(map_view, qtbot) -> None:
+    from PySide6.QtCore import QRectF
+
+    # a rectangle around site A only; Alt picks the zones instead
+    x0, y0 = to_mercator(-84.55, 39.05)
+    x1, y1 = to_mercator(-84.45, 39.15)
+    rect = QRectF(QPointF(x0, y0), QPointF(x1, y1)).normalized()
+    assert map_view.features_inside(rect) == ["a"]
+    assert map_view.features_inside(rect, zones_only=True) == []  # the zone's centre is elsewhere
+    zx0, zy0 = to_mercator(-84.7, 38.9)
+    zx1, zy1 = to_mercator(-84.2, 39.4)
+    big = QRectF(QPointF(zx0, zy0), QPointF(zx1, zy1)).normalized()
+    assert sorted(map_view.features_inside(big)) == ["a", "b"]
+    assert map_view.features_inside(big, zones_only=True) == ["z"]
+
+    # a lasso (triangle) that holds B but not A
+    tri = [to_mercator(lon, lat) for lon, lat in ((-84.45, 39.15), (-84.35, 39.15), (-84.40, 39.25))]
+    with qtbot.waitSignal(map_view.selectionChanged) as sig:
+        map_view.select_lasso(tri)
+    assert sig.args == [["b"]]
+    tri_a = [to_mercator(lon, lat) for lon, lat in ((-84.55, 39.05), (-84.45, 39.05), (-84.50, 39.15))]
+    map_view.select_lasso(tri_a, add=True)
+    assert map_view.selection == ["b", "a"]
+
+    # Alt+click picks the zone under a site; Esc clears the selection in the select tools
+    ax, ay = to_mercator(-84.5, 39.1)
+    map_view._clicked(QPointF(ax, ay), Qt.KeyboardModifier.AltModifier, False)
+    assert map_view.selection == ["z"]
+    map_view.setFocus()
+    qtbot.keyClick(map_view, Qt.Key.Key_Escape)
+    assert map_view.selection == []
+
+
+def test_map_tool_modes_and_cursor_readout(map_view, qtbot) -> None:
+    import pyqtgraph as pg
+
+    for mode, vb_mode in (("pan", pg.ViewBox.PanMode), ("zoom", pg.ViewBox.RectMode), ("lasso", pg.ViewBox.PanMode)):
+        with qtbot.waitSignal(map_view.modeChanged):
+            map_view.set_mode(mode)
+        assert map_view.mode == mode and map_view.vb.state["mouseMode"] == vb_mode
+    # clicks in pan / zoom do not change the selection
+    map_view.set_selection(["a"])
+    map_view.set_mode("pan")
+    map_view._clicked(QPointF(*to_mercator(-80.0, 30.0)), NO_MOD, False)
+    assert map_view.selection == ["a"]
+    qtbot.keyClick(map_view, Qt.Key.Key_Escape)  # Esc leaves pan for select
+    assert map_view.mode == "select"
+    x, y = to_mercator(-84.5, 39.1)
+    assert map_view.format_cursor(x, y) == "39.10000° N, 84.50000° W   1 selected"
+    map_view.auto_range()  # Fit all (toolbar) fits every located feature
+    (vx0, vx1), _ = map_view.vb.viewRange()
+    assert vx0 < to_mercator(-84.6, 39.0)[0] and vx1 > to_mercator(-84.3, 39.0)[0]
+
+
 def test_map_zoom_and_scale_bar(map_view) -> None:
     map_view.zoom_to(["a"])
     (x0, x1), (y0, y1) = map_view.vb.viewRange()

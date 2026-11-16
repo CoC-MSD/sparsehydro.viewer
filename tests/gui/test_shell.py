@@ -93,7 +93,31 @@ def test_run_button_follows_the_page(window, qtbot, sample_frame, sample_csv) ->
 def test_chart_actions_bind_to_the_active_chart(window, qtbot, sample_frame, sample_csv) -> None:
     tb = window.toolbar
     window.nav.setCurrentRow(PAGES["Sites"])
-    assert tb.chart.plot is None  # the Map tab is not a time series
+    sites = window.pages[0]
+    # On the Map tab the chart tools act on the map; with the page's map tools they form one exclusive group.
+    assert tb.chart.plot is sites.map and tb.chart.fit.isEnabled() and not tb.chart.auto_y.isEnabled()
+
+    def checked() -> list[str]:
+        acts = [tb.chart.pan, tb.chart.zoom, sites.select_action, sites.edit_locations_action, sites.draw_zone_action]
+        return [a.text() for a in acts if a.isChecked()]
+
+    assert checked() == ["Select"]
+    tb.chart.zoom.trigger()
+    assert sites.map.mode == "zoom" and checked() == ["Zoom box"]
+    sites.select_action.trigger()
+    assert sites.map.mode == "select" and checked() == ["Select"]
+    sites._choose_select_shape("lasso")
+    assert sites.map.mode == "lasso" and checked() == ["Select"]
+    sites.edit_locations_action.trigger()
+    assert sites.map.mode == "move" and checked() == ["Edit locations"]
+    tb.chart.pan.trigger()
+    assert sites.map.mode == "pan" and checked() == ["Pan"]
+    sites.draw_zone_action.trigger()
+    assert checked() == ["Draw zone"]
+    sites.draw_zone_action.trigger()  # turning a tool off returns to Select (lasso, as chosen)
+    assert sites.map.mode == "lasso" and checked() == ["Select"]
+    texts = [a.text() for a in sites.context_actions() if a is not None]
+    assert texts[:3] == ["Select", "Edit locations", "Draw zone"]
     window.pages[0].tabs.setCurrentIndex(1)
     data_plot = window.pages[0].plot
     assert tb.chart.plot is data_plot and tb.chart.fit.isEnabled()

@@ -71,6 +71,8 @@ class ChartActions(QObject):
         self.plot = plot
         for a in self.actions():
             a.setEnabled(plot is not None)
+        # The map uses the same tools, but has no y axis to rescale.
+        self.auto_y.setEnabled(plot is not None and getattr(plot, "supports_auto_y", True))
         if plot is not None:
             plot.modeChanged.connect(self._mode_changed)
             self._mode_changed(plot.mode)

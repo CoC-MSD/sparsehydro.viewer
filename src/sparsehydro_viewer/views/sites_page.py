@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QInputDialog,
     QLabel,
+    QMenu,
     QMessageBox,
     QSplitter,
     QTabWidget,
@@ -165,6 +166,19 @@ class SitesPage(Page):
                                                  "zoom-selection", lambda: self.map.zoom_to(s.selected_nodes or None))
         self.basemap_action = self.action("Basemap", "Show OpenStreetMap tiles under the map (online)", "nav-sites",
                                           self._toggle_basemap, checkable=True)
+        # Select tool: one button whose arrow switches between rectangle and lasso selection.
+        self.select_action = self.action(
+            "Select", "Select on the map: click a site or zone (Ctrl+click adds or removes), drag to select what is "
+                      "inside; Alt picks zones only, Esc clears. The arrow switches rectangle / lasso.",
+            "select", lambda: self._set_map_tool(self._select_shape), shortcut="S", checkable=True)
+        self._select_shape = "select"
+        menu = QMenu(self)
+        for mode, text, icon_name in (("select", "Rectangle", "select"), ("lasso", "Lasso (free shape)", "lasso")):
+            a = menu.addAction(icon(icon_name), text)
+            a.triggered.connect(lambda _=False, m=mode: self._choose_select_shape(m))
+        self.select_action.setMenu(menu)
+        self._select_menu = menu
+        self.select_action.setChecked(True)
 
         s.projectChanged.connect(self._project_changed)
         s.nodesStructureChanged.connect(self.rebuild)
@@ -188,15 +202,27 @@ class SitesPage(Page):
         self.import_data()
 
     def context_actions(self):
-        acts = [self.add_site_action, self.draw_zone_action, self.delete_action, None,
-                self.edit_locations_action, self.zoom_selection_action, self.basemap_action]
         if self.tabs.currentIndex() == 1:
-            acts += [None, *self.periods.actions()]
+            acts = [self.add_site_action, self.delete_action, None, *self.periods.actions()]
+        else:  # map tools: one exclusive group together with the toolbar's Pan and Zoom box
+            acts = [self.select_action, self.edit_locations_action, self.draw_zone_action, None,
+                    self.add_site_action, self.delete_action, None, self.zoom_selection_action, self.basemap_action]
         self.delete_action.setEnabled(bool(self.ctx.session.selected_nodes))
         return acts
 
     def active_chart(self):
-        return self.plot if self.tabs.currentIndex() == 1 else None
+        """The time-series chart on its tab, the map on the Map tab (the toolbar's Pan, Zoom box, Fit all and
+        Export act on it)."""
+        return self.plot if self.tabs.currentIndex() == 1 else self.map
+
+    def _set_map_tool(self, mode: str) -> None:
+        self.tabs.setCurrentIndex(0)
+        self.map.set_mode(mode)
+
+    def _choose_select_shape(self, mode: str) -> None:
+        self._select_shape = mode
+        self.select_action.setIcon(icon("lasso" if mode == "lasso" else "select"))
+        self._set_map_tool(mode)
 
     def status_text(self) -> str:
         s = self.ctx.session
@@ -343,7 +369,7 @@ class SitesPage(Page):
             self.window().statusBar().showMessage("Click the zone's vertices; double-click or Enter to finish, "
                                                   "Esc to cancel.", 10000)
         else:
-            self.map.set_mode("select")
+            self.map.set_mode(self._select_shape)
 
     def _zone_drawn(self, ring: list) -> None:
         name, ok = QInputDialog.getText(self, "New zone", "Zone name:")
@@ -367,9 +393,11 @@ class SitesPage(Page):
         if on:
             self.draw_zone_action.setChecked(False)
             self.tabs.setCurrentIndex(0)
-        self.map.set_mode("move" if on else "select")
+        self.map.set_mode("move" if on else self._select_shape)
 
     def _map_mode_changed(self, mode: str) -> None:
+        """Keep exactly one map tool checked (Pan and Zoom box follow the map through the toolbar)."""
+        self.select_action.setChecked(mode in ("select", "lasso"))
         self.edit_locations_action.setChecked(mode == "move")
         self.draw_zone_action.setChecked(mode == "draw")
 
