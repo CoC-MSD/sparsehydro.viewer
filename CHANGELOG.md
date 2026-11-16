@@ -69,6 +69,11 @@ All notable changes are documented here. The format follows
   every model's fitted values, and "Use as working model" sends a configuration with its pooled (or the event's)
   values to the Model page. Progress covers every fit, and Stop cancels between events. One failing model does
   not lose the others. The configurations are saved in the project.
+- Compare: the chosen-solutions chart shows every ticked run at once, each with its own solution (knee, best for
+  any objective, or one picked by clicking it in the parallel coordinates), chosen in a list beside the chart; the
+  same choice is used for scoring and marked on the fronts. The chart is simulated as soon as runs are ticked (no
+  scoring needed), over the whole record with the calibration and validation periods shaded, runs alternate solid
+  and dashed lines, and runs on other datasets are named instead of silently left out.
 - `sparsehydro-viewer --self-test REPORT` checks an installation (every unit hydrograph, composed models and their
   traces, small calibrations in spawned worker processes, a project round trip, the main window) and writes a
   report; optional components such as the Platypus optimizers are reported as unavailable without failing. The
@@ -100,3 +105,8 @@ All notable changes are documented here. The format follows
 - Project folders (`project.json` + `runs/*.npz`), recent projects, light/dark themes.
 - Packaging: wheel with `sparsehydro-viewer` GUI entry point, PyInstaller spec, Inno Setup installer
   script, CI for tests and releases.
+
+### Fixed
+
+- Compare: the chosen-solutions chart was squeezed to a few pixels on ordinary screens (it looked empty) and
+  stayed empty until the runs were scored; it now has a minimum height and the largest share of the page.

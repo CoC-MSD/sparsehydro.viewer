@@ -275,6 +275,23 @@ def test_calibrate_explore_compare_save_reload(window, qtbot, sample_frame, samp
     assert len(shown) == sum(g == "pass" for g in grades)
     compare.grade_filter.setCurrentIndex(0)
 
+    # Chosen solutions: drawn without scoring, over the whole record, one per ticked run, each with its own choice.
+    qtbot.waitUntil(lambda: len([k for k in compare.ts._curves if k.startswith("run:")]) == 2, timeout=30000)
+    assert compare.choices.rowCount() == 2 and compare.ts.minimumHeight() >= 260
+    t0, t1 = compare.ts.data_range()
+    assert t1 - t0 > 0.95 * (sample_frame["datetime"].iloc[-1] - sample_frame["datetime"].iloc[0]).total_seconds()
+    r0 = runs[0]
+    box = compare.choices.cellWidget(0, 1)
+    best = f"best:{r0.objective_names[0]}"
+    box.setCurrentIndex(box.findData(best))
+    assert compare.choice(r0) == best and compare._solution_index(r0) == r0.best_index(r0.objective_names[0])
+    assert compare.choice(runs[1]) == "knee"  # the other run keeps its own choice
+    last = r0.n_solutions - 1
+    compare._row_clicked([i for i, (rid, k) in enumerate(compare._row_index) if rid == r0.id][last])
+    assert compare.choice(r0) == f"index:{last}"
+    qtbot.waitUntil(lambda: (r0.id, last) in compare._hydrographs, timeout=30000)
+    assert "Picked" in compare.choices.cellWidget(0, 1).currentText()
+
     # Save, reload, identical results.
     s.save_project(str(tmp_path / "proj.shproj"))
     back = Project.load(tmp_path / "proj.shproj")

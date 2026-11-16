@@ -7,7 +7,8 @@ from dataclasses import dataclass
 
 import numpy as np
 import pyqtgraph as pg
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -28,6 +29,7 @@ from ..core.diagnostics import ComplexityPoint, complexity_front, fit_statistics
 from ..core.evaluation import Evaluator
 from ..core.runs import RunRecord
 from ..widgets import AxisSpec, ParallelCoordinates, ParetoLayer, ParetoPlot, TimeseriesPlot
+from ..widgets.timeseries_plot import PERIOD_COLORS
 from .common import num_item, objective_better, objective_labels, page_header, text_item
 from .context import AppContext
 from .shell.page import Page
@@ -69,6 +71,49 @@ def grade_run(run: RunRecord, index: int, frame, dataset, attributes: dict, opti
                               run.objectives, source=run.label).result
     except Exception:  # noqa: BLE001 - e.g. no events in the period: the run is simply not graded
         return None
+
+
+@dataclass
+class _Hydrograph:
+    """One chosen solution simulated over its dataset's whole record."""
+
+    run_id: str
+    index: int
+    dataset: str
+    t: np.ndarray
+    rain: np.ndarray
+    observed: np.ndarray
+    predicted: np.ndarray
+
+
+def simulate_whole_record(run: RunRecord, frame, index: int) -> _Hydrograph:
+    """Solution *index* of *run* over the whole record (not only a period), for the chosen-solutions chart."""
+    from ..core.data import Period
+
+    ev = Evaluator(run.model, frame, run.objectives, Period())
+    ev.evaluate(run.fixed_values)
+    res = ev.evaluate_vector(run.param_names, run.pareto_X[index])
+    return _Hydrograph(run.id, index, run.dataset, epoch_seconds(ev.datetime), np.asarray(ev.rain, float),
+                       np.asarray(ev.observed, float), np.asarray(res.predicted, float))
+
+
+def solution_choices(run: RunRecord) -> list[tuple[str, str]]:
+    """``(key, label)`` of the solutions offered for a run: knee, best for each objective, and every solution."""
+    labels = objective_labels(run.objective_names)
+    out = [("knee", "Knee (balanced)")]
+    out += [(f"best:{n}", f"Best {labels.get(n, n)}") for n in run.objective_names]
+    return out
+
+
+def resolve_choice(run: RunRecord, choice: str) -> int:
+    """Pareto index of a choice key (``knee``, ``best:<objective>`` or ``index:<i>``)."""
+    if choice.startswith("best:") and choice[5:] in run.objective_names:
+        return run.best_index(choice[5:])
+    if choice.startswith("index:"):
+        i = int(choice[6:])
+        if 0 <= i < run.n_solutions:
+            return i
+    return run.knee_index()
 
 
 def score_run(run: RunRecord, frame, calibration, validation, index: int, *, dataset=None,
@@ -119,6 +164,8 @@ class ComparePage(Page):
         self.solution = QComboBox()
         self.solution.addItem("Knee solution", "knee")
         self.solution.addItem("Best for the plotted objective", "best")
+        self.solution.setToolTip("Solution used for every run (scores, complexity plot, hydrographs); change it for "
+                                 "one run in the Chosen solutions list")
         self.solution.currentIndexChanged.connect(self._solution_changed)
         self.grade_filter = QComboBox()
         self.grade_filter.addItem("All runs", None)
@@ -153,6 +200,36 @@ class ComparePage(Page):
         self.parallel = ParallelCoordinates()
         self.pareto = ParetoPlot(labels=objective_labels(), better=objective_better())
         self.ts = TimeseriesPlot()
+        self.ts.setToolTip("Chosen solution of every ticked run over the whole record; shaded: calibration "
+                           "(blue) and validation (orange) periods")
+        self.choices = QTableWidget(0, 2)
+        self.choices.setHorizontalHeaderLabels(["Run", "Solution"])
+        self.choices.verticalHeader().setVisible(False)
+        self.choices.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.choices.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.choices.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.choices.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.choices.setAccessibleName("Chosen solution of each ticked run")
+        self.choices.setToolTip("Solution of each run shown in the hydrograph and used for scoring: the knee, the "
+                                "best for an objective, or one picked in the parallel coordinates")
+        self.ts_note = QLabel()
+        self.ts_note.setObjectName("hint")
+        self.ts_note.setWordWrap(True)
+        chosen_side = QWidget()
+        cl = QVBoxLayout(chosen_side)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.addWidget(self.choices, 1)
+        cl.addWidget(self.ts_note)
+        chosen_side.setMinimumWidth(260)
+        chosen_side.setMaximumWidth(420)
+        chosen = QSplitter()
+        chosen.addWidget(chosen_side)
+        chosen.addWidget(self.ts)
+        chosen.setStretchFactor(1, 1)
+        self._sim_timer = QTimer(self)
+        self._sim_timer.setSingleShot(True)
+        self._sim_timer.setInterval(120)
+        self._sim_timer.timeout.connect(self._simulate_chosen)
 
         def boxed(title: str, w: QWidget) -> QGroupBox:
             g = QGroupBox(title)
@@ -174,7 +251,12 @@ class ComparePage(Page):
         main = QSplitter(Qt.Orientation.Vertical)
         main.addWidget(top)
         main.addWidget(mid)
-        main.addWidget(boxed("Chosen solutions (calibration period)", self.ts))
+        main.addWidget(boxed("Chosen solutions (whole record)", chosen))
+        # The hydrograph was squeezed to a few pixels by the two chart rows above on ordinary screens.
+        self.ts.setMinimumHeight(260)
+        main.setChildrenCollapsible(False)
+        for i, stretch in enumerate((2, 2, 3)):
+            main.setStretchFactor(i, stretch)
         lay = QVBoxLayout(self)
         lay.addWidget(page_header("Compare", "Compare alternative models. Prefer the simplest model whose "
                                              "performance is close to the best; the step line shows where extra "
@@ -183,6 +265,10 @@ class ComparePage(Page):
         self._checked: set[str] = set()
         self._seen: set[str] = set()
         self._scores: dict[str, _Score] = {}
+        self._choice: dict[str, str] = {}  # run id -> "knee" | "best:<objective>" | "index:<i>"
+        self._hydrographs: dict[tuple[str, int], _Hydrograph] = {}
+        self._sim_job = None
+        self._sim_errors: dict[tuple[str, int], str] = {}
         self._filling = False
         s.runsChanged.connect(self.refresh)
         s.runUpdated.connect(lambda _rid: self.refresh())
@@ -196,6 +282,9 @@ class ComparePage(Page):
         self._checked.clear()
         self._seen.clear()
         self._scores.clear()
+        self._choice.clear()
+        self._hydrographs.clear()
+        self._sim_errors.clear()
         self.refresh()
 
     def _runs(self) -> list[RunRecord]:
@@ -212,11 +301,25 @@ class ComparePage(Page):
                     names.append(n)
         return names
 
-    def _solution_index(self, run: RunRecord) -> int:
+    def _default_choice(self, run: RunRecord) -> str:
         metric = self.metric.currentData()
         if self.solution.currentData() == "best" and metric in run.objective_names:
-            return run.best_index(metric)
-        return run.knee_index()
+            return f"best:{metric}"
+        return "knee"
+
+    def choice(self, run: RunRecord) -> str:
+        return self._choice.get(run.id) or self._default_choice(run)
+
+    def set_choice(self, run_id: str, choice: str) -> None:
+        """Choose the solution of one run (``knee``, ``best:<objective>`` or ``index:<i>``)."""
+        if self._choice.get(run_id) == choice:
+            return
+        self._choice[run_id] = choice
+        self._scores.pop(run_id, None)  # its scores were for another solution
+        self.refresh()
+
+    def _solution_index(self, run: RunRecord) -> int:
+        return resolve_choice(run, self.choice(run))
 
     # ------------------------------------------------------------------ table
 
@@ -318,6 +421,7 @@ class ComparePage(Page):
 
     def _solution_changed(self) -> None:
         self._scores.clear()
+        self._choice.clear()
         self.refresh()
 
     # ------------------------------------------------------------------ scoring
@@ -447,21 +551,124 @@ class ComparePage(Page):
                                             theme.series_color(self._color_index(r.id)), knee=self._solution_index(r))
                                 for r in runs])
 
-        # -- hydrographs of scored solutions (same dataset as the first one)
+        # -- chosen solutions: list and hydrographs (simulated in the background)
+        self._fill_choices(runs)
+        self._sim_timer.start()
+
+    # ------------------------------------------------------------------ chosen solutions
+
+    def _fill_choices(self, runs: list[RunRecord]) -> None:
+        self.choices.setRowCount(len(runs))
+        for i, run in enumerate(runs):
+            name = text_item(run.label, run.id)
+            name.setForeground(pg.mkColor(theme.series_color(self._color_index(run.id))))
+            name.setToolTip(f"{run.model.display_label} on {run.dataset}")
+            self.choices.setItem(i, 0, name)
+            box = QComboBox()
+            box.setAccessibleName(f"Solution of {run.label}")
+            for key, label in solution_choices(run):
+                box.addItem(label, key)
+            current = self.choice(run)
+            if current.startswith("index:"):
+                box.addItem(f"Picked: solution #{resolve_choice(run, current) + 1}", current)
+            box.setCurrentIndex(max(box.findData(current), 0))
+            box.setToolTip("Knee: the balanced solution of the front; Best: the best for that objective; Picked: "
+                           "the solution clicked in the parallel coordinates")
+            box.currentIndexChanged.connect(lambda _i, b=box, rid=run.id: self.set_choice(rid, b.currentData()))
+            self.choices.setCellWidget(i, 1, box)
+
+    def chosen_runs(self) -> list[tuple[RunRecord, int]]:
+        return [(r, self._solution_index(r)) for r in self._selected_runs() if self._passes_filter(r)]
+
+    def _simulate_chosen(self) -> None:
+        """Simulate the chosen solutions not yet cached, then redraw the chart."""
+        s = self.ctx.session
+        todo = []
+        for run, idx in self.chosen_runs():
+            if (run.id, idx) in self._hydrographs:
+                continue
+            try:
+                todo.append((run, idx, s.frame(run.dataset)))
+            except Exception:  # noqa: BLE001 - dataset removed: the run is listed but not drawn
+                continue
+        if not todo:
+            self._draw_hydrographs()
+            return
+        if self._sim_job is not None:
+            return  # the running job redraws when done, then picks up what is missing
+
+        def work(ctx):
+            out = []
+            for i, (run, idx, frame) in enumerate(todo):
+                if ctx.cancelled:
+                    break
+                ctx.progress(f"simulating {run.label}", i / len(todo))
+                try:
+                    out.append(simulate_whole_record(run, frame, idx))
+                except Exception as exc:  # noqa: BLE001 - reported in the chart note
+                    out.append((run.id, idx, f"{type(exc).__name__}: {exc}"))
+            return out
+
+        def done(results) -> None:
+            self._sim_job = None
+            for h in results:
+                if isinstance(h, _Hydrograph):
+                    self._hydrographs[(h.run_id, h.index)] = h
+                else:
+                    self._sim_errors[(h[0], h[1])] = h[2]
+            self._simulate_chosen()
+
+        def failed(_msg: str) -> None:
+            self._sim_job = None
+
+        self._sim_job = self.submit_job("Simulate chosen solutions", work, on_done=done, on_error=failed)
+
+    def _draw_hydrographs(self) -> None:
+        """Observed and rain of the analysis dataset (or the first run's), every chosen solution on it."""
         self.ts.clear_curves()
-        scored = [self._scores[r.id] for r in runs if r.id in self._scores]
-        if scored:
-            first = scored[0]
-            self.ts.set_data(first.t, first.rain, first.observed)
-            for sc in scored:
-                if sc.dataset == first.dataset and len(sc.t) == len(first.t):
-                    run = self.ctx.session.run(sc.run_id)
-                    self.ts.set_curve(sc.run_id, sc.t, sc.predicted,
-                                      color=theme.series_color(self._color_index(sc.run_id)),
-                                      name=run.label if run else sc.run_id)
+        chosen = [(r, i) for r, i in self.chosen_runs() if (r.id, i) in self._hydrographs]
+        if not chosen:
+            self.ts_note.setText("Tick runs to compare their chosen solutions." if not self._selected_runs()
+                                 else "")
+            return
+        s = self.ctx.session
+        names = [r.dataset for r, _ in chosen]
+        base_name = s.dataset_name if s.dataset_name in names else names[0]
+        base = next(self._hydrographs[(r.id, i)] for r, i in chosen if r.dataset == base_name)
+        self.ts.set_data(base.t, base.rain, base.observed, f"Observed ({base_name})")
+        others = []
+        for n, (run, idx) in enumerate(chosen):
+            h = self._hydrographs[(run.id, idx)]
+            if h.dataset != base_name:
+                others.append(run.label)
+                continue
+            label = dict(solution_choices(run)).get(self.choice(run), f"solution #{idx + 1}")
+            self.ts.set_curve(f"run:{run.id}", h.t, h.predicted, color=theme.series_color(self._color_index(run.id)),
+                              width=1.8, dashed=n % 2 == 1, name=f"{run.label}: {label}")
+        spans = []
+        try:
+            ds = s.project.dataset(base_name)
+            for key, period in (("calibration", ds.calibration), ("validation", ds.validation)):
+                if not period.is_open:
+                    t0 = epoch_seconds([period.start])[0] if period.start else base.t[0]
+                    t1 = epoch_seconds([period.end])[0] if period.end else base.t[-1]
+                    c = QColor(PERIOD_COLORS[key])
+                    c.setAlpha(28)
+                    spans.append((t0, t1, c.name(QColor.NameFormat.HexArgb)))
+        except KeyError:
+            pass
+        self.ts.set_spans(spans)
+        notes = []
+        if others:
+            notes.append(f"Not drawn (other datasets than {base_name}): {', '.join(others)}.")
+        errors = [msg for (rid, _), msg in self._sim_errors.items() if rid in self._checked]
+        if errors:
+            notes.append("Could not simulate: " + "; ".join(errors))
+        self.ts_note.setText(" ".join(notes))
 
     def _row_clicked(self, row: int) -> None:
         if 0 <= row < len(self._row_index):
             rid, idx = self._row_index[row]
             self.ctx.session.select(rid, [idx])
+            self.set_choice(rid, f"index:{idx}")
             self.parallel.set_highlight([row])
