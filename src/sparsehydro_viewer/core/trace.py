@@ -123,9 +123,22 @@ def flow_parts(fields: list[TraceField], arrays: dict[str, np.ndarray], output: 
     return expand(output, 1.0, 0) if output in by_owner else []
 
 
+_FLOW_LEAF = re.compile(r"(_cfs|_flow|^Q_pred|^rdii_(in|mm))$")
+
+
+def is_flow(field: TraceField) -> bool:
+    """A flow series (shown on the hydrograph and its components layer, not with the states)."""
+    return bool(_FLOW_LEAF.search(field.leaf)) or field.units.lower() in ("cfs", "cms", "flow")
+
+
 def state_fields(fields: list[TraceField]) -> list[TraceField]:
-    """States and fluxes (what the states panel lists), in model order."""
-    return [f for f in fields if f.role in ("state", "flux")]
+    """States and fluxes between stores (what the states panel lists), in model order.
+
+    Flows (a term's output, a series that has components) are left to the
+    hydrograph and its components layer.
+    """
+    owners = {f.component_of for f in fields if f.role == "component"}
+    return [f for f in fields if f.role in ("state", "flux") and f.name not in owners and not is_flow(f)]
 
 
 __all__ = ["TraceField", "flow_parts", "leaf_label", "state_fields", "trace_fields"]

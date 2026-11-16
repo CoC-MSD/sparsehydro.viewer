@@ -52,6 +52,10 @@ def test_states_of_the_losses_are_listed(short_frame) -> None:
     f = next(s for s in states if s.name == "ia.ia_available")
     assert f.role == "state" and f.label == "ia › remaining abstraction" and f.units == "in"
     assert len(trace["ia.ia_available"]) == len(short_frame)
+    # flows belong to the hydrograph and its components layer, not the states list
+    ev2, _, _ = _evaluate(ProcessDesign(routing=["rtk-triangle"], sanitary=True), short_frame)
+    listed = [f.name for f in state_fields(ev2.trace_fields())]
+    assert listed == ["wet.p_excess_in", "wet.ia.ia_available"]
 
 
 def test_labels() -> None:
