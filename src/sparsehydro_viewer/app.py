@@ -53,8 +53,9 @@ def create_app(argv: list[str] | None = None) -> QApplication:
 
         app.setWindowIcon(app_icon())
     _load_user_extensions()
-    name = QSettings().value("theme", "light")
-    theme.apply(app, theme.DARK if name == "dark" else theme.LIGHT)
+    wanted = theme.by_name(QSettings().value("theme", "light"))
+    if created or theme.current() is not wanted:  # re-applying restyles every existing widget
+        theme.apply(app, wanted)
     return app
 
 

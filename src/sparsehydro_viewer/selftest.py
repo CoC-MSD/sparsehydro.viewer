@@ -76,11 +76,13 @@ def _versions() -> str:
 
 
 def _extensions() -> str:
-    from .core.extensions import load_extensions
+    from .core.extensions import load_extensions, report
 
+    before = len(report().failed)  # the report is cumulative over the process
     rep = load_extensions()
-    if rep.failed:
-        raise RuntimeError("; ".join(f"{label}: {err}" for label, err in rep.failed))
+    failed = rep.failed[before:]
+    if failed:
+        raise RuntimeError("; ".join(f"{label}: {err}" for label, err in failed))
     return f"{len(rep.loaded)} installed extensions loaded" + (f": {', '.join(rep.loaded)}" if rep.loaded else "")
 
 
