@@ -26,7 +26,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .. import APP_NAME, DEVELOPER_NAME, PARTNERSHIP, __version__, theme
+from .. import APP_NAME, DEVELOPER_NAME, DEVELOPMENT_CREDIT, __version__, theme
 from ..core.project import SUFFIX, Project
 from ..resources import icon
 from ..services import CalibrationService, JobManager, LiveEvaluationService
@@ -452,7 +452,7 @@ class MainWindow(QMainWindow):
 
         v = versions()
         QMessageBox.about(self, APP_NAME, f"<b>{APP_NAME}</b> {__version__}<br>"
-                                          f"Developer: {DEVELOPER_NAME}<br>{PARTNERSHIP}<br><br>"
+                                          f"Developer: {DEVELOPER_NAME}<br>{DEVELOPMENT_CREDIT}<br><br>"
                                           f"sparsehydro {v['sparsehydro']}<br>PySide6 {v['PySide6']} "
                                           f"(Qt, LGPLv3)<br>pyqtgraph {v['pyqtgraph']}")
 

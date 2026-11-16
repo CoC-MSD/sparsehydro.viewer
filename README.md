@@ -11,8 +11,8 @@ Built on PySide6 (Qt for Python) and pyqtgraph.
 
 **Developer:** Caleb Buahin.
 
-A partnership between **MSDGC** (Metropolitan Sewer District of Greater Cincinnati)
-and **Hazen and Sawyer**.
+Developed on behalf of **MSDGC** (Metropolitan Sewer District of Greater Cincinnati)
+by **Hazen and Sawyer**.
 
 ## Install
 

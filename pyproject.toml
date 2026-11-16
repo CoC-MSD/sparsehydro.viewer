@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "sparsehydro-viewer"
 dynamic = ["version"]
-description = "Desktop workbench for building, calibrating and comparing sparsehydro models. A partnership between MSDGC and Hazen and Sawyer."
+description = "Desktop workbench for building, calibrating and comparing sparsehydro models. Developed on behalf of MSDGC by Hazen and Sawyer."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
