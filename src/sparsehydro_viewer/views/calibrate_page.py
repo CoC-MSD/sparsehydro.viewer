@@ -338,7 +338,8 @@ class CalibratePage(Page):
         self.launch_hint.setText(
             f"Model: <b>{s.model_spec.display_label}</b>, {cal} of {total} parameters calibrated "
             f"(fixed ones keep their slider values). Objectives: {len(s.objectives)}. "
-            f"Dataset: {ds.name if ds else '-'} ({period}).")
+            f"Dataset: {ds.name if ds else '-'} ({period})"
+            + (f"; {s.inputs_text()}." if ds else "."))
         self._can_run = ds is not None and cal > 0 and len(s.objectives) > 0
         self.run_btn.setEnabled(self._can_run)
         self.contextChanged.emit()

@@ -77,3 +77,4 @@ class AppContext:
     def __post_init__(self) -> None:
         self.session.runUpdated.connect(self.sim_cache.drop_run)
         self.session.projectChanged.connect(self.sim_cache.clear)
+        self.session.datasetDataChanged.connect(lambda _name: self.sim_cache.clear())  # different rain: redo

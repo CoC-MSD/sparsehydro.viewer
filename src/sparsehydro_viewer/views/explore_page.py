@@ -172,6 +172,7 @@ class ExplorePage(Page):
         s.runsChanged.connect(self.refresh_runs)
         s.runUpdated.connect(lambda _rid: self.refresh_runs())
         s.projectChanged.connect(self.refresh_runs)
+        s.datasetDataChanged.connect(lambda _name: self._simulate())  # another rain gauge: redraw the solutions
         s.solutionSelectionChanged.connect(self._selection_changed)
         s.solutionSelectionChanged.connect(lambda *_: self.contextChanged.emit())
         s.solutionFilterChanged.connect(self._filter_changed)

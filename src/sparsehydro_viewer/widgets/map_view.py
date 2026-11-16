@@ -146,6 +146,7 @@ class MapView(pg.PlotWidget):
         self._drag_marker: pg.ScatterPlotItem | None = None
         self._draft: list[tuple[float, float]] = []
         self._draft_item: pg.PlotDataItem | None = None
+        self._links: list[pg.PlotDataItem] = []
         self._lasso: list[tuple[float, float]] = []
         self._lasso_item: pg.PlotDataItem | None = None
         self.scene().sigMouseMoved.connect(self._mouse_moved)
@@ -217,6 +218,23 @@ class MapView(pg.PlotWidget):
                                    "locations and click the map to place it.")
         self.empty_hint.setVisible(bool(missing))
         self._place_overlays()
+
+    def set_links(self, links: list[tuple[str, str]]) -> None:
+        """Draw a dashed line between located features, e.g. a flow site and the site of the rain gauge it uses."""
+        for item in self._links:
+            self.removeItem(item)
+        self._links = []
+        pen = pg.mkPen(theme.current().muted, width=1.5, style=Qt.PenStyle.DashLine)
+        for a, b in links:
+            if a in self._xy and b in self._xy:
+                (x0, y0), (x1, y1) = self._xy[a], self._xy[b]
+                item = pg.PlotDataItem([x0, x1], [y0, y1], pen=pen)
+                item.setZValue(5)
+                la = self.features[a].label if a in self.features else a
+                lb = self.features[b].label if b in self.features else b
+                item.setToolTip(f"{la} uses a gauge at {lb}")
+                self.addItem(item, ignoreBounds=True)
+                self._links.append(item)
 
     def _label(self, text: str, x: float, y: float, color: str) -> None:
         t = pg.TextItem(text, color=color, anchor=(-0.1, 1.1))

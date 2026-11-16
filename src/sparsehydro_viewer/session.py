@@ -29,6 +29,7 @@ class Session(QObject):
     nodesStructureChanged = Signal()  # nodes added or removed
     nodeSelectionChanged = Signal(list)  # iris selected in the Sites workspace (tree or map)
     datasetChanged = Signal()
+    datasetDataChanged = Signal(str)  # a dataset's series changed (another rain gauge or temperature series)
     periodsChanged = Signal()  # calibration/validation period of the current dataset
     modelChanged = Signal()
     modelRenamed = Signal()
@@ -135,6 +136,23 @@ class Session(QObject):
         if name != self.dataset_name:
             self.dataset_name = name
             self.datasetChanged.emit()
+
+    def set_dataset_inputs(self, name: str, *, rain_stream: str | None = None,
+                           temperature_stream: str | None = "") -> None:
+        """Change which rain gauge and/or temperature series dataset *name* uses (see
+        :meth:`~.core.project.Project.set_dataset_inputs`); everything computed from the dataset is redone."""
+        self.project.set_dataset_inputs(name, rain_stream=rain_stream, temperature_stream=temperature_stream)
+        self._frames.pop(name, None)  # the frame is rebuilt from the new series
+        self.set_dirty()
+        self.datasetDataChanged.emit(name)
+        self.nodesStructureChanged.emit()  # the tree lists each dataset's inputs
+        if name == self.dataset_name:
+            self.datasetChanged.emit()
+
+    def inputs_text(self, name: str | None = None) -> str:
+        """Rain and temperature series of a dataset (default: the current one), for hints and tooltips."""
+        name = name or self.dataset_name
+        return self.project.inputs_text(name) if name else ""
 
     # ------------------------------------------------------------------ nodes (project database)
 

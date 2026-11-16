@@ -31,6 +31,9 @@ from .solvers import SOLVERS, SolverSpec
 from .store import ProjectStore, StoreError
 
 SUFFIX = ".shproj"
+#: Observed properties of the series a dataset reads (seeded in the project database).
+PROP_RAIN = "wsys:prop/rainfall_depth"
+PROP_TEMPERATURE = "wsys:prop/temperature"
 LEGACY_FILE = "project.json"
 FORMAT_VERSION = 1
 
@@ -102,6 +105,65 @@ class Project:
             spec.temperature_stream = ids.get("temperature")
         self.upsert_dataset(spec)
         return spec
+
+    # -- input series of a dataset (which rain gauge, which temperature) ----------------------------
+
+    def dataset_inputs(self, name: str) -> dict[str, dict | None]:
+        """What dataset *name* reads: ``{"rain": entry, "flow": entry, "temperature": entry | None}`` with the
+        entries of :meth:`ProjectStore.series_catalog` (``None`` for a series that is not set or is gone)."""
+        spec = self.dataset(name)
+        catalog = {e["iri"]: e for e in self.store.series_catalog()}
+        return {"rain": catalog.get(spec.rain_stream or ""), "flow": catalog.get(spec.flow_stream or ""),
+                "temperature": catalog.get(spec.temperature_stream or "")}
+
+    def inputs_text(self, name: str) -> str:
+        """One line naming the dataset's rain and temperature series and their sites."""
+        try:
+            inputs = self.dataset_inputs(name)
+            site = self.dataset(name).site_iri
+        except KeyError:
+            return ""
+
+        def one(entry: dict | None, none: str) -> str:
+            if entry is None:
+                return none
+            elsewhere = f" @ {entry['site_label']}" if entry["site_iri"] != site and entry["site_label"] else ""
+            return f"{entry['label']}{elsewhere}"
+
+        return f"rain: {one(inputs['rain'], 'not stored')}; temperature: {one(inputs['temperature'], 'none')}"
+
+    def set_dataset_inputs(self, name: str, *, rain_stream: str | None = None,
+                           temperature_stream: str | None = "") -> None:
+        """Change the rain gauge and/or temperature series of dataset *name*.
+
+        :param rain_stream: Datastream to read rain from (``None``: unchanged). It may belong to another site.
+        :param temperature_stream: Datastream to read temperature from, ``None`` for no temperature, or
+            ``""`` (default) to leave it unchanged.
+        :raises ValueError: If the series is not of the right kind, or rain and flow do not overlap in time.
+        """
+        spec = self.dataset(name)
+        if not spec.stored:
+            raise ValueError(f"{name} is not stored in the project; import it first")
+        props = {e["iri"]: e for e in self.store.series_catalog()}
+        rain = spec.rain_stream if rain_stream is None else rain_stream
+        temp = spec.temperature_stream if temperature_stream == "" else temperature_stream
+        for stream, prop, what in ((rain, PROP_RAIN, "rain"), (temp, PROP_TEMPERATURE, "temperature")):
+            if stream is not None and (stream not in props or props[stream]["observed_property"] != prop):
+                raise ValueError(f"{stream!r} is not a {what} series of this project")
+        frame = self.store.frame(rain, spec.flow_stream, temp)  # type: ignore[arg-type]
+        if len(frame) < 3:
+            raise ValueError(f"{props[rain]['label']} and the flow record of {name} do not overlap in time")
+        spec.rain_stream, spec.temperature_stream = rain, temp
+        # USES_GAGE: the dataset's site takes rain or temperature from a sensor's series at another site.
+        if spec.site_iri:
+            self.store.remove_edges(spec.site_iri, "USES_GAGE")
+            for other in self.datasets:
+                if other.site_iri != spec.site_iri:
+                    continue
+                for stream in (other.rain_stream, other.temperature_stream):
+                    gauge_site = props.get(stream or "", {}).get("site_iri")
+                    if gauge_site and gauge_site != spec.site_iri:
+                        self.store.add_edge(spec.site_iri, gauge_site, "USES_GAGE", {"datastream": stream})
 
     def frame(self, name: str) -> pd.DataFrame:
         """Standard frame of dataset *name*, from the database (or, if never imported, from its source file)."""

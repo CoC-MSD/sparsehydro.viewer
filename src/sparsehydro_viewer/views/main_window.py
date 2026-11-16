@@ -381,7 +381,7 @@ class MainWindow(QMainWindow):
         else:
             period = "whole record" if ds.calibration.is_open else \
                 f"{ds.calibration.start[:10]} to {(ds.calibration.end or '')[:10]}"
-            data = f"{ds.name}, calibration {period}"
+            data = f"{ds.name}, calibration {period}<br>{s.inputs_text()}"
         self.params.set_context(
             f"<b>Working model:</b> {s.model_spec.display_label}<br>"
             f"<span style='font-size:9pt'>{data}<br>Drives the Model page simulation, the ★ point in "

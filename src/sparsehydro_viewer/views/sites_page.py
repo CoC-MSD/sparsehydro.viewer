@@ -48,6 +48,7 @@ from ..widgets.tile_layer import DEFAULT_ATTRIBUTION
 from ..widgets.timeseries_plot import PERIOD_COLORS
 from .common import page_header
 from .context import AppContext
+from .dataset_inputs import DatasetInputsBar
 from .import_dialog import ImportDialog
 from .node_properties import NodePropertiesPanel
 from .shell.page import Page
@@ -124,6 +125,8 @@ class SitesPage(Page):
         row.addWidget(QLabel("Dataset"))
         row.addWidget(self.datasets, 1)
         tsl.addLayout(row)
+        self.inputs = DatasetInputsBar(ctx)  # which rain gauge and temperature series the dataset uses
+        tsl.addWidget(self.inputs)
         per = QHBoxLayout()
         per.addWidget(self.cal, 1)
         per.addWidget(self.val, 1)
@@ -334,6 +337,20 @@ class SitesPage(Page):
                     f.setBold(True)
                     child.setFont(0, f)
                 item.addChild(child)
+                if ds.stored:  # what the dataset reads: its flow, its rain gauge, its temperature
+                    inputs = s.project.dataset_inputs(ds.name)
+                    for role, kind in (("flow", "Flow"), ("rain", "Rain gauge"), ("temperature", "Temperature")):
+                        entry = inputs[role]
+                        if entry is None and role != "temperature":
+                            continue
+                        text = "(none)" if entry is None else entry["label"] + (
+                            f" @ {entry['site_label']}" if entry["site_iri"] != site.iri else "")
+                        leaf = QTreeWidgetItem([text, kind])
+                        leaf.setData(0, ROLE, ("dataset", ds.name))
+                        leaf.setForeground(0, Qt.GlobalColor.gray)
+                        leaf.setToolTip(0, f"{kind} series used by dataset {ds.name}; change it on the Time series "
+                                           "tab or the Model page")
+                        child.addChild(leaf)
             self.tree.addTopLevelItem(item)
             features.append(MapFeature(site.iri, site.label, site.geometry, color, "site",
                                        ", ".join(SENSOR_LABELS.get(k, k) for k in sorted(k for k in kinds if k))))
@@ -347,6 +364,7 @@ class SitesPage(Page):
         self.tree.expandAll()
         first = not self.map.features
         self.map.set_features(features)
+        self.map.set_links([(a, b) for a, b, _ in st.edges(relation="USES_GAGE")])  # flow site -> its gauge's site
         if first:
             self.map.zoom_to()
         self._syncing = False
@@ -529,6 +547,12 @@ class SitesPage(Page):
             return
         t = epoch_seconds(frame["datetime"])
         self.plot.set_data(t, frame["rain"].to_numpy(), frame["stormflow"].to_numpy())
+        if "temperature_c" in frame.columns:  # the dataset's temperature series, on the same time axis
+            self.plot.set_panels([("temperature", "Temperature [°C]",
+                                   [("Temperature", frame["temperature_c"].to_numpy(float), theme.series_color(5),
+                                     False)])], t)
+        else:
+            self.plot.set_panels([], t)
         t0, t1 = frame["datetime"].iloc[0], frame["datetime"].iloc[-1]
         for ed in (self.cal, self.val):
             ed.set_range(t0, t1)
@@ -537,7 +561,8 @@ class SitesPage(Page):
         self.summary.setText(
             f"<b>{ds.name}</b>: {sm.rows:,} rows, {sm.start:%Y-%m-%d %H:%M} to {sm.end:%Y-%m-%d %H:%M}; "
             f"time step {sm.dt_minutes:g} min ({sm.irregular_steps} irregular steps); total rain "
-            f"{sm.total_rain:.2f} in; peak flow {sm.peak_flow:.3g} cfs; missing flow values {sm.missing_flow}")
+            f"{sm.total_rain:.2f} in; peak flow {sm.peak_flow:.3g} cfs; missing flow values {sm.missing_flow}"
+            f"<br>Inputs - {s.inputs_text(ds.name)}")
 
     def _apply_periods(self) -> None:
         self.ctx.session.set_periods(self.cal.period(), self.val.period())

@@ -68,6 +68,9 @@ class DatasetSelector(QWidget):
         lines.append(f"Calibration: {period(d.calibration)}")
         if not d.validation.is_open:
             lines.append(f"Validation: {period(d.validation)}")
+        inputs = self.session.inputs_text(d.name)
+        if inputs:
+            lines.append(f"Inputs - {inputs}")
         lines.append("Used by every analysis page.")
         return "<br>".join(lines)
 

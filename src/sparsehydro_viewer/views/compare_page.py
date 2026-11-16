@@ -256,6 +256,7 @@ class ComparePage(Page):
         s.runsChanged.connect(self.refresh)
         s.runUpdated.connect(lambda _rid: self.refresh())
         s.projectChanged.connect(self._reset)
+        s.datasetDataChanged.connect(self._data_changed)
         # Selection is the session's: these charts write it and redraw from it, as Explore's do.
         s.solutionSelectionChanged.connect(self._selection_changed)
         self.parallel.rowPicked.connect(self._row_clicked)
@@ -272,6 +273,15 @@ class ComparePage(Page):
         self._seen.clear()
         self._scores.clear()
         self._choice.clear()
+        self._hydrographs.clear()
+        self._series.clear()
+        self._drawn_want = None
+        self._sim_errors.clear()
+        self.refresh()
+
+    def _data_changed(self, _name: str = "") -> None:
+        """A dataset reads another rain gauge or temperature series: scores and hydrographs are redone."""
+        self._scores.clear()
         self._hydrographs.clear()
         self._series.clear()
         self._drawn_want = None

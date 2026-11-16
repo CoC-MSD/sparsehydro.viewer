@@ -439,6 +439,39 @@ class ProjectStore:
             out["temperature" if col == "temperature_c" else ("rain" if col == "rain" else "flow")] = stream
         return out
 
+    def series_catalog(self, observed_property: str | None = None) -> list[dict[str, Any]]:
+        """Every stored series, optionally of one observed property (e.g. ``wsys:prop/rainfall_depth``).
+
+        Each entry: ``iri``, ``label``, ``observed_property``, ``site_iri``, ``site_label``, ``count``,
+        ``start`` and ``end`` (``pandas.Timestamp``), ``step_minutes`` (``None`` when irregular). Used to offer
+        the rain gauge and temperature series a dataset can use.
+        """
+        q = ("SELECT d.iri, d.label, d.observed_property, d.feature_of_interest, o.start_ns, o.step_ns, o.count "
+             "FROM datastream d JOIN observation_array o ON o.datastream = d.iri "
+             "WHERE o.result_kind = 'MEASUREMENT'")
+        args: list[Any] = []
+        if observed_property:
+            q += " AND d.observed_property = ?"
+            args.append(observed_property)
+        out = []
+        for r in self.conn.execute(q + " ORDER BY d.label, d.iri", args):
+            site = self.node(r["feature_of_interest"])
+            start = pd.Timestamp(int(r["start_ns"]))
+            if r["step_ns"]:
+                end = pd.Timestamp(int(r["start_ns"]) + int(r["step_ns"]) * (int(r["count"]) - 1))
+            else:
+                s = self.read_series(r["iri"])
+                end = s.index[-1] if s is not None and len(s) else start
+            out.append({"iri": r["iri"], "label": r["label"], "observed_property": r["observed_property"],
+                        "site_iri": r["feature_of_interest"], "site_label": site.label if site else "",
+                        "count": int(r["count"]), "start": start, "end": end,
+                        "step_minutes": r["step_ns"] / 6e10 if r["step_ns"] else None})
+        return out
+
+    def remove_edges(self, from_iri: str, relation: str) -> None:
+        with self.transaction() as c:
+            c.execute("DELETE FROM edge WHERE from_iri = ? AND relation = ?", (from_iri, relation))
+
     def frame(self, rain: str, flow: str, temperature: str | None = None) -> pd.DataFrame:
         """Rebuild the standard frame (``datetime``, ``rain``, ``stormflow``[, ``temperature_c``])."""
         r, q = self.read_series(rain), self.read_series(flow)

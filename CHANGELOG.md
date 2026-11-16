@@ -8,6 +8,15 @@ All notable changes are documented here. The format follows
 
 ### Added
 
+- Dataset inputs: every dataset names the rain gauge and temperature series it reads, and both can be changed
+  to any rain or temperature series of the project, including a gauge at another site (pickers on the Sites
+  time-series tab and above the Model page hydrograph). The series must overlap the flow record. A change
+  rebuilds the dataset, re-simulates the working model and redraws Explore and Compare. The inputs are shown
+  in the Sites tree under each dataset, in the dataset selector's tooltip, the Working model panel, the
+  Calibrate launch hint and the Assess banner; the map draws a dashed line from a flow site to the site of
+  the gauge it uses (`USES_GAGE`), and the Sites chart plots temperature in its own panel.
+- Assess names the working model ("Working model: <name> (current slider values)") in the model list, the
+  grade banner, the hydrograph legend and the status bar, and follows a rename.
 - Developer credit for Caleb Buahin and attribution as developed on behalf of MSDGC by Hazen and Sawyer
   in the About dialog, package metadata, Windows installer and documentation.
 - Application shell: one standard toolbar on every page (project, Run/Stop for the page's command, chart

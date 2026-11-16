@@ -137,7 +137,7 @@ class AssessPage(Page):
                                             "critical flow volume and the peak fit of the largest storms (Con15)."))
         lay.addWidget(split, 1)
         self.last: AssessmentRun | None = None
-        for sig in (s.runsChanged, s.projectChanged, s.modelChanged, s.datasetChanged):
+        for sig in (s.runsChanged, s.projectChanged, s.modelChanged, s.modelRenamed, s.datasetChanged):
             sig.connect(self.refresh_sources)
         self.refresh_sources()
 
@@ -161,7 +161,7 @@ class AssessPage(Page):
         if self.last is None:
             return ""
         g = GRADE_STYLE[self.last.result.grade][0]
-        return f"MSDGC: {g}" + ("" if self.last.result.official else " (provisional)")
+        return f"MSDGC: {g}" + ("" if self.last.result.official else " (provisional)") + f" - {self.last.source}"
 
     # ------------------------------------------------------------------ sources
 
@@ -169,10 +169,16 @@ class AssessPage(Page):
         current = self.source.currentData()
         self.source.blockSignals(True)
         self.source.clear()
-        self.source.addItem("Working model (current slider values)", ("working", None))
-        for r in self.ctx.session.project.runs:
+        s = self.ctx.session
+        self.source.addItem(f"Working model: {s.model_spec.display_label} (current slider values)", ("working", None))
+        self.source.setItemData(0, f"The model built on the Model page ({s.model_spec.display_label}) at the values "
+                                   "of the Working model panel, on the current dataset", Qt.ItemDataRole.ToolTipRole)
+        for r in s.project.runs:
             if r.has_results:
                 self.source.addItem(f"{r.label}: knee solution ({r.dataset})", ("run", r.id))
+                self.source.setItemData(self.source.count() - 1,
+                                        f"Model {r.model.display_label}, calibrated on {r.dataset}",
+                                        Qt.ItemDataRole.ToolTipRole)
         i = self.source.findData(current)
         self.source.setCurrentIndex(max(i, 0))
         self.source.blockSignals(False)
@@ -184,7 +190,7 @@ class AssessPage(Page):
         if kind == "run":
             run = s.project.run(key)
             return run.model, run.solution_values(run.knee_index()), run.dataset, f"{run.label} (knee)"
-        return s.model_spec, dict(s.values), s.dataset_name, "working model"
+        return s.model_spec, dict(s.values), s.dataset_name, f"{s.model_spec.display_label} (working model)"
 
     # ------------------------------------------------------------------ run
 
@@ -207,18 +213,20 @@ class AssessPage(Page):
             ctx.progress(f"assessing {label}")
             return run_assessment(spec, values, frame, ds, attrs, options, objectives, source=label)
 
-        self.submit_job(f"Assess {label}", work, on_done=self.show_run,
+        self.submit_job(f"Assess {label}", work, on_done=lambda run: self.show_run(run, ds_name),
                         on_error=lambda m: self.warnings.setText(f"<span style='color:#cf222e'>{m}</span>"))
 
     # ------------------------------------------------------------------ display
 
-    def show_run(self, run: AssessmentRun) -> None:
+    def show_run(self, run: AssessmentRun, dataset: str | None = None) -> None:
         self.last = run
         res = run.result
+        inputs = f"{dataset}: {self.ctx.session.inputs_text(dataset)}" if dataset else ""
         text, symbol, color = GRADE_STYLE[res.grade]
         official = "official grade" if res.official else "provisional: see the notes below"
         self.grade.setText(f"<span style='font-size:20pt'>{symbol} {text}</span><br>"
-                           f"<span style='font-size:9pt'>{run.source}, {run.period.lower()} — {official}</span>")
+                           f"<span style='font-size:9pt'>{run.source}, {run.period.lower()} — {official}"
+                           + (f"<br>{inputs}" if inputs else "") + "</span>")
         self.grade.setStyleSheet(f"QLabel#gradeBanner {{ border: 2px solid {color}; border-radius: 6px; "
                                  f"color: {color}; padding: 4px; }}")
         self.grade.setAccessibleDescription(f"{text}, {official}")

@@ -33,6 +33,7 @@ from ..widgets.process_builder import ProcessBuilder
 from ..widgets.states_panel import StatesPanel
 from .common import num_item, objective_labels, page_header, text_item
 from .context import AppContext
+from .dataset_inputs import DatasetInputsBar
 from .shell.page import Page
 
 
@@ -109,6 +110,8 @@ class ModelPage(Page):
         self.plot = TimeseriesPlot()
         plot_box = QGroupBox("Simulated vs observed (calibration period)")
         pl = QVBoxLayout(plot_box)
+        self.inputs = DatasetInputsBar(ctx)  # which rain gauge and temperature the model is driven with
+        pl.addWidget(self.inputs)
         pl.addWidget(self.plot, 1)
         self.uh = UHPreview()
         self.pin_action = self.action("Pin shape", "Keep the current unit hydrographs for comparison", "pin",
