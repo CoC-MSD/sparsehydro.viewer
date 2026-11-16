@@ -33,6 +33,9 @@ def test_timeseries_legend_hides_curves_bands_and_stacks_across_redraws(qtbot) -
         plot.set_stack("parts", t, [("UH 1", y * 0.5, "#0072B2"), ("UH 2", y * 0.4, "#009E73")])
 
     draw()
+    # the fills have geometry (a band between pen-less data items would be empty and invisible)
+    assert plot._bands["band"].path().elementCount() > 50
+    assert all(i.path().elementCount() > 50 for i in plot._stacks["parts"][::2])
     toggle = plot.legend_toggle
     assert set(toggle.names()) == {"Observed", "Simulated", "Pareto range", "UH 1", "UH 2"}
     with qtbot.waitSignal(toggle.visibilityChanged) as sig:

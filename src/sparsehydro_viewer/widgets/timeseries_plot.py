@@ -261,8 +261,9 @@ class TimeseriesPlot(pg.GraphicsLayoutWidget):
         legend entry."""
         self.remove_band(key)
         t = self._t if t is None else np.asarray(t, float)
-        lo = pg.PlotDataItem(t, np.asarray(lower, float), pen=None)
-        hi = pg.PlotDataItem(t, np.asarray(upper, float), pen=None)
+        # Plain curve items: a PlotDataItem without a pen never builds its path, and the fill would be empty.
+        lo = pg.PlotCurveItem(t, np.nan_to_num(np.asarray(lower, float)))
+        hi = pg.PlotCurveItem(t, np.nan_to_num(np.asarray(upper, float)))
         c = QColor(color)
         c.setAlpha(60)
         band = pg.FillBetweenItem(lo, hi, brush=c)
@@ -297,7 +298,7 @@ class TimeseriesPlot(pg.GraphicsLayoutWidget):
         t = self._t if t is None else np.asarray(t, float)
         items: list = []
         base = np.zeros(len(t))
-        lower_item = pg.PlotDataItem(t, base, pen=None)
+        lower_item = pg.PlotCurveItem(t, base)  # (not a pen-less PlotDataItem: see set_band)
         for label, y, color in layers:
             top = base + np.nan_to_num(np.asarray(y, float))
             upper_item = pg.PlotDataItem(t, top, pen=_pen(color, 0.8), name=label)
