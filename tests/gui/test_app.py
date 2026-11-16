@@ -243,6 +243,15 @@ def test_calibrate_explore_compare_save_reload(window, qtbot, sample_frame, samp
     qtbot.waitUntil(lambda: len(compare._scores) == 2, timeout=20000)
     assert all(np.isfinite(sc.cal["AIC"]) for sc in compare._scores.values())
     assert compare.parallel.s.data.shape[0] == runs[0].n_solutions + runs[1].n_solutions
+    # ... and each run's MSDGC grade, as a column and as the marker shape on the complexity plot
+    grades = [sc.grade for sc in compare._scores.values()]
+    assert all(g in ("pass", "conditional", "fail") for g in grades)
+    col = [compare.table.horizontalHeaderItem(c).text() for c in range(compare.table.columnCount())].index("MSDGC grade")
+    assert all(compare.table.item(r, col).text() for r in range(2))
+    compare.grade_filter.setCurrentIndex(1)  # pass only
+    shown = [r for r in compare._selected_runs() if compare._passes_filter(r)]
+    assert len(shown) == sum(g == "pass" for g in grades)
+    compare.grade_filter.setCurrentIndex(0)
 
     # Save, reload, identical results.
     s.save_project(str(tmp_path / "proj.shproj"))

@@ -47,10 +47,33 @@ class _Score:
     observed: np.ndarray
     rain: np.ndarray
     dataset: str
+    #: MSDGC grade on the calibration period ("pass" | "conditional" | "fail"), Cinci score, official flag.
+    grade: str | None = None
+    cinci: float | None = None
+    official: bool = False
 
 
-def score_run(run: RunRecord, frame, calibration, validation, index: int) -> _Score:
-    """Fit statistics of one solution on the calibration and validation periods."""
+#: Marker of each grade on the complexity plot: shape as well as colour tells them apart.
+GRADE_SYMBOL = {"pass": "o", "conditional": "d", "fail": "x"}
+GRADE_SHORT = {"pass": "MSDGC pass", "conditional": "MSDGC conditional", "fail": "MSDGC fail"}
+
+
+def grade_run(run: RunRecord, index: int, frame, dataset, attributes: dict, options: dict):
+    """MSDGC grade of solution *index* on the dataset's calibration period (``None`` when it cannot be graded)."""
+    from ..core.assess import ASSESS_OPTIONS, run_assessment
+    from ..core.options import resolve_options
+
+    opts = resolve_options(ASSESS_OPTIONS, {**options, "period": "calibration"})
+    try:
+        return run_assessment(run.model, run.solution_values(index), frame, dataset, attributes, opts,
+                              run.objectives, source=run.label).result
+    except Exception:  # noqa: BLE001 - e.g. no events in the period: the run is simply not graded
+        return None
+
+
+def score_run(run: RunRecord, frame, calibration, validation, index: int, *, dataset=None,
+              attributes: dict | None = None, assess_options: dict | None = None) -> _Score:
+    """Fit statistics of one solution on the calibration and validation periods, and its MSDGC grade."""
     k = run.n_params_calibrated
     ev = Evaluator(run.model, frame, run.objectives, calibration)
     ev.evaluate(run.fixed_values)
@@ -65,8 +88,12 @@ def score_run(run: RunRecord, frame, calibration, validation, index: int) -> _Sc
             val = fit_statistics(vev.observed, vres.predicted, k)
         except ValueError:
             val = None
+    graded = grade_run(run, index, frame, dataset, attributes or {}, assess_options or {}) \
+        if dataset is not None else None
     return _Score(run.id, index, cal, val, epoch_seconds(ev.datetime), res.predicted, ev.observed, ev.rain,
-                  run.dataset)
+                  run.dataset, graded.grade if graded else None,
+                  float(graded.summary.set_index("group").loc["all", "cinci_score"]) if graded else None,
+                  bool(graded.official) if graded else False)
 
 
 class ComparePage(Page):
@@ -74,8 +101,8 @@ class ComparePage(Page):
     icon_name = "nav-compare"
     uses_working_model = True
     primary_text = "Score runs"
-    primary_tip = ("Simulate each ticked run's chosen solution on the calibration and validation periods and "
-                   "compute NSE, RMSE, AIC and BIC")
+    primary_tip = ("Simulate each ticked run's chosen solution on the calibration and validation periods, "
+                   "compute NSE, RMSE, AIC and BIC, and grade it with the MSDGC criteria")
 
     def __init__(self, ctx: AppContext) -> None:
         super().__init__(ctx)
@@ -93,11 +120,20 @@ class ComparePage(Page):
         self.solution.addItem("Knee solution", "knee")
         self.solution.addItem("Best for the plotted objective", "best")
         self.solution.currentIndexChanged.connect(self._solution_changed)
+        self.grade_filter = QComboBox()
+        self.grade_filter.addItem("All runs", None)
+        self.grade_filter.addItem("MSDGC pass", ("pass",))
+        self.grade_filter.addItem("MSDGC pass or conditional", ("pass", "conditional"))
+        self.grade_filter.setToolTip("Plot only the ticked runs whose MSDGC grade (after scoring) is one of these")
+        self.grade_filter.setAccessibleName("MSDGC grade filter")
+        self.grade_filter.currentIndexChanged.connect(self._draw)
         ctl = QHBoxLayout()
         ctl.addWidget(QLabel("Measure"))
         ctl.addWidget(self.metric, 1)
         ctl.addWidget(QLabel("Solution"))
         ctl.addWidget(self.solution, 1)
+        ctl.addWidget(QLabel("Show"))
+        ctl.addWidget(self.grade_filter, 1)
         ctl.addStretch(1)
         tbox = QGroupBox("Runs (tick to compare)")
         tl = QVBoxLayout(tbox)
@@ -204,7 +240,7 @@ class ComparePage(Page):
         self.metric.blockSignals(False)
 
         cols = ["Run", "Model", "Dataset", "k cal", "k total", "Solutions"] + \
-               [f"best {labels.get(n, n)}" for n in objs] + SCORE_COLUMNS
+               [f"best {labels.get(n, n)}" for n in objs] + SCORE_COLUMNS + ["MSDGC grade", "Cinci score"]
         self._filling = True
         self.table.setSortingEnabled(False)
         self.table.clear()
@@ -232,6 +268,7 @@ class ComparePage(Page):
                     sc.val.get("NSE") if sc.val else None, sc.val.get("RMSE") if sc.val else None] if sc \
                 else [None] * len(SCORE_COLUMNS)
             cells += [num_item(v) for v in vals]
+            cells += [self._grade_item(sc), num_item(sc.cinci if sc else None, "{:.3f}")]
             for c, it in enumerate(cells):
                 self.table.setItem(r, c, it)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
@@ -239,6 +276,30 @@ class ComparePage(Page):
         self._filling = False
         self._draw()
         self.contextChanged.emit()
+
+    @staticmethod
+    def _grade_item(sc) -> QTableWidgetItem:
+        from PySide6.QtGui import QBrush, QColor
+
+        from .assess_page import GRADE_STYLE
+
+        if sc is None or sc.grade is None:
+            it = text_item("" if sc is None else "not graded")
+            it.setToolTip("Score the run to grade it; a run with no events in its calibration period is not graded")
+            return it
+        text, symbol, color = GRADE_STYLE[sc.grade]
+        it = text_item(f"{symbol} {text}" + ("" if sc.official else " *"), ["pass", "conditional", "fail"].index(sc.grade))
+        it.setForeground(QBrush(QColor(color)))
+        it.setToolTip("MSDGC calibration grade on the calibration period"
+                      + ("" if sc.official else "\n* provisional: see the Assess page for what is missing"))
+        return it
+
+    def _passes_filter(self, run: RunRecord) -> bool:
+        wanted = self.grade_filter.currentData()
+        if not wanted:
+            return True
+        sc = self._scores.get(run.id)
+        return sc is not None and sc.grade in wanted
 
     def _color_index(self, run_id: str) -> int:
         ids = [r.id for r in self._runs()]
@@ -284,17 +345,20 @@ class ComparePage(Page):
                 frame, ds = s.frame(run.dataset), s.project.dataset(run.dataset)
             except Exception:
                 continue
-            jobs.append((run, frame, ds.calibration, ds.validation, self._solution_index(run)))
+            attrs = s.store.attributes(ds.site_iri) if ds.site_iri else {}
+            jobs.append((run, frame, ds, attrs, self._solution_index(run)))
         if not jobs:
             return
+        assess_options = dict(s.ui("assess_options", {}))
 
         def work(ctx):
             out = []
-            for i, (run, frame, cal, val, idx) in enumerate(jobs):
+            for i, (run, frame, ds, attrs, idx) in enumerate(jobs):
                 if ctx.cancelled:
                     break
                 ctx.progress(f"scoring {run.label}", i / len(jobs))
-                out.append(score_run(run, frame, cal, val, idx))
+                out.append(score_run(run, frame, ds.calibration, ds.validation, idx, dataset=ds, attributes=attrs,
+                                     assess_options=assess_options))
             return out
 
         def done(scores: list[_Score]) -> None:
@@ -328,7 +392,7 @@ class ComparePage(Page):
         return objective_better([m]).get(m, "min") or "min"
 
     def _draw(self) -> None:
-        runs = self._selected_runs()
+        runs = [r for r in self._selected_runs() if self._passes_filter(r)]
         th = theme.current()
         # -- complexity
         self.complexity.clear()
@@ -343,9 +407,13 @@ class ComparePage(Page):
                 continue
             pts.append(ComplexityPoint(run.id, run.label, run.n_params_calibrated, -v if better == "max" else v))
             c = theme.series_color(self._color_index(run.id))
-            self.complexity.addItem(pg.ScatterPlotItem([run.n_params_calibrated], [v], size=12, brush=c,
+            sc = self._scores.get(run.id)
+            grade = sc.grade if sc else None
+            self.complexity.addItem(pg.ScatterPlotItem([run.n_params_calibrated], [v], size=14 if grade else 12,
+                                                       symbol=GRADE_SYMBOL.get(grade, "o"), brush=c,
                                                        pen=pg.mkPen(th.plot_bg)))
-            t = pg.TextItem(run.label, color=th.plot_fg, anchor=(0, 1))
+            label = run.label + (f"  [{GRADE_SHORT[grade]}]" if grade else "")
+            t = pg.TextItem(label, color=th.plot_fg, anchor=(0, 1))
             t.setPos(run.n_params_calibrated, v)
             self.complexity.addItem(t)
         front = complexity_front(pts)
