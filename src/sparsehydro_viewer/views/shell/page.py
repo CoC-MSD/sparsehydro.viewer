@@ -9,6 +9,11 @@ status bar:
 * :meth:`active_chart` - the chart the shared navigation buttons act on;
 * :meth:`status_text` - page-specific text for the status bar's context zone.
 
+A page that shows the working model (its hydrograph, its point in a Pareto
+plot, its row in a table) calls :meth:`Page.watch_working_model` and
+implements :meth:`Page.working_model_changed`: the visible page is redrawn
+with every evaluation (every slider move), a hidden one when it is next shown.
+
 Pages emit :attr:`contextChanged` whenever any of these change; the shell
 re-reads them.
 """
@@ -37,7 +42,37 @@ class Page(QWidget):
         super().__init__()
         self.ctx = ctx
         self._job_ids: set[int] = set()
+        self._working_stale = False
         ctx.jobs.jobChanged.connect(self._job_changed)
+
+    # -- the working model on this page -----------------------------------------
+
+    def watch_working_model(self) -> None:
+        """Call :meth:`working_model_changed` whenever the working model is re-evaluated or renamed."""
+        c = self.ctx.controller
+        c.result.connect(self._working_result)
+        c.unavailable.connect(lambda *_: self._working_result(None))
+        self.ctx.session.modelRenamed.connect(lambda: self._working_result(c.last))
+
+    def _working_result(self, res) -> None:
+        if self.isVisible():
+            self._working_stale = False
+            self.working_model_changed(res)
+        else:
+            self._working_stale = True  # redrawn when the page is shown
+
+    def working_model_changed(self, res) -> None:
+        """Redraw what this page shows of the working model.
+
+        :param res: The latest :class:`~sparsehydro_viewer.services.LiveResult`, or ``None`` when the working
+            model cannot be evaluated (no dataset, or the evaluation failed).
+        """
+
+    def showEvent(self, ev) -> None:  # noqa: N802 (Qt naming)
+        super().showEvent(ev)
+        if self._working_stale:
+            self._working_stale = False
+            self.working_model_changed(self.ctx.controller.last)
 
     # -- shell protocol ----------------------------------------------------
 

@@ -35,6 +35,7 @@ from ..core.simulate import MAX_LINES, SolutionSeries, simulate_solutions
 from ..services import LiveResult
 from ..widgets import AxisSpec, ParallelCoordinates, ParetoLayer, ParetoPlot, TimeseriesPlot, UHPreview
 from .common import (
+    draw_working,
     history_key,
     history_layers,
     num_item,
@@ -43,6 +44,7 @@ from .common import (
     page_header,
     parse_history_key,
     text_item,
+    working_name,
 )
 from .context import AppContext
 from .shell.page import Page
@@ -182,7 +184,7 @@ class ExplorePage(Page):
         self.parallel.rowPicked.connect(lambda i, add: self._pick(SolutionRef(self._run.id, i), add)
                                         if self._run else None)
         self.parallel.selectionChanged.connect(self._brush_changed)
-        ctx.controller.result.connect(self._live)
+        self.watch_working_model()
         self.refresh_runs()
 
     # ------------------------------------------------------------------ shell
@@ -454,6 +456,7 @@ class ExplorePage(Page):
             if key not in keys:
                 self.ts.remove_curve(key)
         self._lines = keys
+        self.working_model_changed(self.ctx.controller.last)
         self.ts.set_stack("components", sim.t, [(label, y, theme.series_color(i))
                                                 for i, (label, y) in enumerate(sim.parts or [])])
         self.uh.set_curves(sim.curves)
@@ -525,15 +528,29 @@ class ExplorePage(Page):
 
     # ------------------------------------------------------------------ live slider point
 
-    def _live(self, res: LiveResult) -> None:
+    def _live(self, res: LiveResult | None) -> None:
+        """The working model among the run's solutions: a star in the scatter whenever it is scored with the
+        run's objectives, and a line in the parallel coordinates when it has the run's parameters too."""
         run = self._run
         s = self.ctx.session
-        if run is None or s.model_spec.structure_key != run.model.structure_key:
+        name = working_name(s)
+        if run is None or res is None:
             self.pareto.set_marker(None)
             self.parallel.set_extra_line(None)
             return
-        if res.calibration.objectives.keys() >= set(run.objective_names):
-            self.pareto.set_marker(res.calibration.objectives, "sliders")
+        scored = res.calibration.objectives.keys() >= set(run.objective_names)
+        self.pareto.set_marker(res.calibration.objectives if scored else None, name)
+        if s.model_spec.structure_key != run.model.structure_key:
+            self.parallel.set_extra_line(None)
+            return
         values = dict(res.calibration.values)
         values.update(res.calibration.objectives)
-        self.parallel.set_extra_line(values, "sliders")
+        self.parallel.set_extra_line(values, name)
+
+    def working_model_changed(self, res) -> None:
+        """The working model among the run's solutions (see :meth:`_live`) and its hydrograph, on the run's
+        chart when the run is of the current dataset."""
+        s = self.ctx.session
+        run = self._run
+        self._live(res)
+        draw_working(self.ts, res, s, show=run is not None and run.dataset == s.dataset_name and bool(self._lines))

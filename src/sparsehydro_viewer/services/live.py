@@ -16,8 +16,9 @@ from typing import Any
 import pandas as pd
 from PySide6.QtCore import QObject, QThread, Signal, Slot
 
-from ..core.catalog import ModelSpec
+from ..core.catalog import ModelSpec, parameter_counts
 from ..core.data import Period
+from ..core.diagnostics import fit_statistics
 from ..core.evaluation import Evaluation, Evaluator
 from ..core.objectives import ObjectiveSpec
 from ..core.uh import KernelCurve, kernel_curves
@@ -45,6 +46,14 @@ class LiveResult:
     slow_responses: tuple = ()
     #: Other forcing series of the dataset over the calibration period (e.g. temperature).
     inputs: dict | None = None
+    #: Fit statistics (NSE, RMSE, AIC, BIC...) on the calibration and validation periods, as Compare scores runs.
+    stats_cal: dict | None = None
+    stats_val: dict | None = None
+    #: Parameter counts of the working model: calibrated, and all.
+    n_calibrated: int = 0
+    n_total: int = 0
+    #: Time axis of :attr:`validation` (``None`` without a validation period).
+    val_datetime: Any = None
 
 
 @dataclass
@@ -118,10 +127,14 @@ class _Worker(QObject):
                         trace = self._cal.trace()
                     except Exception as exc:  # a model without a working trace still evaluates
                         log.warning("trace unavailable: %s", exc)
+                total, k = parameter_counts(self._cal.built.model)
+                stats_cal = fit_statistics(self._cal.observed, cal.predicted, k)
+                stats_val = fit_statistics(self._val.observed, val.predicted, k) if val is not None else None
                 self.ready.emit(LiveResult(cal, val, self._cal.datetime, self._cal.observed, self._cal.rain,
                                            curves, self._cal.dt_hours, generation, trace, fields,
                                            self._cal.predicted_key, tuple(self._cal.slow_responses),
-                                           dict(self._cal.inputs)))
+                                           dict(self._cal.inputs), stats_cal, stats_val, int(k), int(total),
+                                           self._val.datetime if val is not None else None))
             except Exception as exc:
                 log.exception("live evaluation failed")
                 self.failed.emit(f"{type(exc).__name__}: {exc}")

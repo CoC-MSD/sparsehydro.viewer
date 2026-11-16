@@ -32,7 +32,16 @@ from ..core.selection import SolutionRef
 from ..core.simulate import SolutionSeries, simulate_solutions
 from ..widgets import AxisSpec, ParallelCoordinates, ParetoLayer, ParetoPlot, TimeseriesPlot
 from ..widgets.timeseries_plot import PERIOD_COLORS
-from .common import num_item, objective_better, objective_labels, page_header, text_item
+from .common import (
+    WORKING_KEY,
+    draw_working,
+    num_item,
+    objective_better,
+    objective_labels,
+    page_header,
+    text_item,
+    working_name,
+)
 from .context import AppContext
 from .shell.page import Page
 
@@ -117,6 +126,23 @@ def score_run(run: RunRecord, frame, calibration, validation, index: int, *, dat
                   run.dataset, graded.grade if graded else None,
                   float(graded.summary.set_index("group").loc["all", "cinci_score"]) if graded else None,
                   bool(graded.official) if graded else False)
+
+
+def grade_working(spec, values: dict, frame, dataset, attributes: dict, objectives, label: str,
+                  assess_options: dict) -> _Score | None:
+    """MSDGC grade of the working model at *values* on the dataset's calibration period, as a score whose
+    ``run_id`` is :data:`~.common.WORKING_KEY` (``None`` when it cannot be graded)."""
+    from ..core.assess import ASSESS_OPTIONS, run_assessment
+    from ..core.options import resolve_options
+
+    opts = resolve_options(ASSESS_OPTIONS, {**assess_options, "period": "calibration"})
+    try:
+        graded = run_assessment(spec, values, frame, dataset, attributes, opts, objectives, source=label).result
+    except Exception:  # noqa: BLE001 - e.g. no events in the period
+        return None
+    empty = np.empty(0)
+    return _Score(WORKING_KEY, 0, {}, None, empty, empty, empty, empty, dataset.name, graded.grade,
+                  float(graded.summary.set_index("group").loc["all", "cinci_score"]), bool(graded.official))
 
 
 class ComparePage(Page):
@@ -253,6 +279,16 @@ class ComparePage(Page):
         self._sim_errors: dict[str, str] = {}
         self._filling = False
         self._filling_parallel = False
+        #: The working model as an entry of the comparison: its latest live result, its MSDGC grade (from
+        #: "Score runs", valid until the model or its values change), and what the charts hold for it.
+        self._working = None
+        self._working_grade: _Score | None = None
+        self._working_star: list = []
+        self._table_objs: list[str] = []
+        self._ts_base: str | None = None
+        for sig in (s.valuesChanged, s.modelChanged, s.parametersEdited, s.datasetChanged, s.periodsChanged):
+            sig.connect(self._working_ungraded)
+        self.watch_working_model()
         s.runsChanged.connect(self.refresh)
         s.runUpdated.connect(lambda _rid: self.refresh())
         s.projectChanged.connect(self._reset)
@@ -325,6 +361,7 @@ class ComparePage(Page):
     # ------------------------------------------------------------------ table
 
     def refresh(self) -> None:
+        self._working = self.ctx.controller.last
         runs = self._runs()
         ids = {r.id for r in runs}
         self._checked |= ids - self._seen  # newly finished runs start ticked; unticked ones stay unticked
@@ -350,7 +387,11 @@ class ComparePage(Page):
         self.table.clear()
         self.table.setColumnCount(len(cols))
         self.table.setHorizontalHeaderLabels(cols)
-        self.table.setRowCount(len(runs))
+        self._table_objs = objs
+        working = self._working_cells()
+        self.table.setRowCount(len(runs) + (1 if working else 0))
+        for c, it in enumerate(working or []):
+            self.table.setItem(len(runs), c, it)
         for r, run in enumerate(runs):
             first = text_item(run.label, run.id)
             first.setFlags(first.flags() | Qt.ItemFlag.ItemIsUserCheckable)
@@ -398,6 +439,108 @@ class ComparePage(Page):
                       + ("" if sc.official else "\n* provisional: see the Assess page for what is missing"))
         return it
 
+    # ------------------------------------------------------------------ the working model as an entry
+
+    def working_model_changed(self, res) -> None:
+        """Score and draw the working model beside the runs: its row in the table, its star in the Pareto and
+        complexity plots, its line in the parallel coordinates and its hydrograph. Called with every
+        evaluation (every slider move) while the page is visible."""
+        self._working = res
+        self._update_working_row()
+        self._draw_working_points()
+        draw_working(self.ts, res, self.ctx.session,
+                     show=self._ts_base is not None and self._ts_base == self.ctx.session.dataset_name)
+
+    def _working_ungraded(self, *_args) -> None:
+        """The model or its values changed: the MSDGC grade no longer describes it."""
+        if self._working_grade is not None:
+            self._working_grade = None
+            self._update_working_row()
+
+    def _working_cells(self) -> list[QTableWidgetItem] | None:
+        """Cells of the working model's row (same columns as a run), or ``None`` when it is not evaluated."""
+        res = self._working
+        s = self.ctx.session
+        if res is None or s.dataset_name is None:
+            return None
+        first = text_item(f"\u2605 {working_name(s)}", WORKING_KEY)
+        first.setForeground(pg.mkColor(theme.current().predicted))
+        first.setToolTip("The working model at its current slider values, scored like a run on the current "
+                         "dataset; it follows the sliders. Score runs to grade it.")
+        cells = [first, text_item(s.model_spec.display_label), text_item(s.dataset_name),
+                 num_item(res.n_calibrated), num_item(res.n_total), text_item("current values")]
+        objectives = res.calibration.objectives
+        cells += [num_item(float(objectives[n]) if n in objectives else None) for n in self._table_objs]
+        cal, val = res.stats_cal or {}, res.stats_val or {}
+        cells += [num_item(v) for v in (cal.get("NSE"), cal.get("RMSE"), cal.get("AIC"), cal.get("BIC"),
+                                        val.get("NSE"), val.get("RMSE"))]
+        g = self._working_grade
+        cells += [self._grade_item(g), num_item(g.cinci if g else None, "{:.3f}")]
+        return cells
+
+    def _update_working_row(self) -> None:
+        """Rewrite the working model's row in place (adding or removing it when it appears or goes)."""
+        row = next((r for r in range(self.table.rowCount()) if self.table.item(r, 0) is not None
+                    and self.table.item(r, 0).data(Qt.ItemDataRole.UserRole) == WORKING_KEY), None)
+        cells = self._working_cells()
+        if cells is not None and len(cells) != self.table.columnCount():
+            return  # the table is being rebuilt
+        self._filling = True
+        self.table.setSortingEnabled(False)
+        try:
+            if cells is None:
+                if row is not None:
+                    self.table.removeRow(row)
+                return
+            if row is None:
+                row = self.table.rowCount()
+                self.table.insertRow(row)
+            for c, it in enumerate(cells):
+                self.table.setItem(row, c, it)
+        finally:
+            self.table.setSortingEnabled(True)
+            self._filling = False
+
+    def _working_metric(self) -> float | None:
+        """The working model's value of the measure plotted in the complexity chart."""
+        res = self._working
+        m = self.metric.currentData() or ""
+        if res is None:
+            return None
+        if m in SCORE_COLUMNS:
+            src = res.stats_val if m.startswith("val") else res.stats_cal
+            return (src or {}).get(m.split(" ", 1)[1] if " " in m else m)
+        v = res.calibration.objectives.get(m)
+        return None if v is None else float(v)
+
+    def _draw_working_points(self) -> None:
+        """Star in the complexity and Pareto plots, dashed line in the parallel coordinates."""
+        res = self._working
+        s = self.ctx.session
+        th = theme.current()
+        for item in self._working_star:
+            self.complexity.removeItem(item)
+        self._working_star = []
+        name = working_name(s)
+        if res is None:
+            self.pareto.set_marker(None)
+            self.parallel.set_extra_line(None)
+            return
+        v = self._working_metric()
+        if v is not None and np.isfinite(v):
+            star = pg.ScatterPlotItem([res.n_calibrated], [v], size=18, symbol="star", brush=th.predicted,
+                                      pen=pg.mkPen(th.plot_fg, width=1))
+            star.setZValue(30)
+            star.setToolTip(name)
+            label = pg.TextItem(name, color=th.plot_fg, anchor=(0, 1))
+            label.setPos(res.n_calibrated, v)
+            self._working_star = [star, label]
+            for item in self._working_star:
+                self.complexity.addItem(item)
+        objectives = {k: float(x) for k, x in res.calibration.objectives.items()}
+        self.pareto.set_marker(objectives, name)
+        self.parallel.set_extra_line({PARAMS_AXIS: float(res.n_calibrated), **objectives}, name)
+
     def _passes_filter(self, run: RunRecord) -> bool:
         wanted = self.grade_filter.currentData()
         if not wanted:
@@ -413,6 +556,8 @@ class ComparePage(Page):
         if self._filling or item.column() != 0:
             return
         rid = item.data(Qt.ItemDataRole.UserRole)
+        if rid == WORKING_KEY:
+            return
         if item.checkState() == Qt.CheckState.Checked:
             self._checked.add(rid)
         else:
@@ -433,7 +578,7 @@ class ComparePage(Page):
         self._score()
 
     def primary_enabled(self) -> bool:
-        return bool(self._selected_runs()) and not self.stop_enabled()
+        return (bool(self._selected_runs()) or self._working is not None) and not self.stop_enabled()
 
     def active_chart(self):
         return self.ts
@@ -452,9 +597,19 @@ class ComparePage(Page):
                 continue
             attrs = s.store.attributes(ds.site_iri) if ds.site_iri else {}
             jobs.append((run, frame, ds, attrs, self._solution_index(run)))
-        if not jobs:
+        working = None
+        if self._working is not None and s.dataset is not None:
+            try:
+                ds = s.dataset
+                working = (s.working_spec(), dict(s.values), s.frame(), ds,
+                           s.store.attributes(ds.site_iri) if ds.site_iri else {}, list(s.objectives),
+                           working_name(s))
+            except Exception:  # noqa: BLE001 - dataset cannot be loaded: the working model is not graded
+                working = None
+        if not jobs and working is None:
             return
         assess_options = dict(s.ui("assess_options", {}))
+        values_then = dict(s.values)
 
         def work(ctx):
             out = []
@@ -464,11 +619,20 @@ class ComparePage(Page):
                 ctx.progress(f"scoring {run.label}", i / len(jobs))
                 out.append(score_run(run, frame, ds.calibration, ds.validation, idx, dataset=ds, attributes=attrs,
                                      assess_options=assess_options))
+            if working is not None and not ctx.cancelled:
+                ctx.progress("grading the working model", 1.0)
+                out.append(grade_working(*working, assess_options))
             return out
 
-        def done(scores: list[_Score]) -> None:
+        def done(scores: list) -> None:
             for sc in scores:
-                self._scores[sc.run_id] = sc
+                if sc is None:
+                    continue
+                if sc.run_id == WORKING_KEY:
+                    if dict(s.values) == values_then:  # still the values that were graded
+                        self._working_grade = sc
+                else:
+                    self._scores[sc.run_id] = sc
             self.refresh()
 
         self.submit_job("Score runs", work, on_done=done)
@@ -529,6 +693,7 @@ class ComparePage(Page):
         if not pts and m in SCORE_COLUMNS:
             t = pg.TextItem("Press 'Score selected runs' to compute this measure", color=th.muted)
             self.complexity.addItem(t)
+        self._working_star = []  # cleared with the chart
 
         # -- parallel coordinates and Pareto fronts
         objs = [n for n in self._objectives() if all(n in r.objective_names for r in runs)] if runs else []
@@ -560,6 +725,7 @@ class ComparePage(Page):
         # -- chosen solutions: list and hydrographs (simulated in the background); selection marks
         self._fill_choices(runs)
         self._selection_changed()
+        self._draw_working_points()
 
     # ------------------------------------------------------------------ chosen solutions
 
@@ -648,6 +814,7 @@ class ComparePage(Page):
         self.ts.clear_curves()
         s = self.ctx.session
         drawn = [(r, i) for r, i in self.chosen_runs() if r.id in self._series]
+        self._ts_base = None
         if not drawn:
             self.ts_note.setText("Tick runs to compare their chosen solutions." if not self._selected_runs()
                                  else "")
@@ -656,6 +823,7 @@ class ComparePage(Page):
         base_name = s.dataset_name if s.dataset_name in names else names[0]
         base = next(self._series[r.id] for r, _ in drawn if r.dataset == base_name)
         self.ts.set_data(base.t, base.rain, base.observed, f"Observed ({base_name})")
+        self._ts_base = base_name
         others = []
         for n, (run, idx) in enumerate(drawn):
             series = self._series[run.id]
@@ -694,6 +862,7 @@ class ComparePage(Page):
         if errors:
             notes.append("Could not simulate: " + "; ".join(errors))
         self.ts_note.setText(" ".join(notes))
+        draw_working(self.ts, self._working, s, show=base_name == s.dataset_name)
 
     # ------------------------------------------------------------------ selection (shared with Explore)
 

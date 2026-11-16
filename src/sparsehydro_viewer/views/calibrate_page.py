@@ -45,6 +45,7 @@ from .common import (
     page_header,
     parse_history_key,
     text_item,
+    working_name,
 )
 from .context import AppContext
 from .shell.page import Page
@@ -246,6 +247,7 @@ class CalibratePage(Page):
         for sig in (ctx.calibration.started, ctx.calibration.finished):
             sig.connect(lambda *_: self.contextChanged.emit())
         self._load_from_session()
+        self.watch_working_model()
 
     # ------------------------------------------------------------------ objectives
 
@@ -617,6 +619,7 @@ class CalibratePage(Page):
                                   name=None if single else run.label)
             self.conv_toggle.register(None if single else run.label, item)
         self._draw_fronts(runs, single)
+        self.working_model_changed(self.ctx.controller.last)
 
     def _draw_fronts(self, runs: list[RunRecord], single: bool) -> None:
         if not single:
@@ -662,6 +665,13 @@ class CalibratePage(Page):
             self.front_box.setTitle("Final front" if run.has_results else "Current front")
         self.front.set_layers(layers)
         self._mark_front()
+
+    def working_model_changed(self, res) -> None:
+        """The working model as a star on the front, when it is scored with the monitored run's objectives."""
+        runs = self._monitored()
+        names = set(runs[0].objective_names) if runs else set()
+        scored = res is not None and bool(names) and res.calibration.objectives.keys() >= names
+        self.front.set_marker(res.calibration.objectives if scored else None, working_name(self.ctx.session))
 
     # -- selecting solutions in the front (shared with Explore and Compare) -----------------------------
 

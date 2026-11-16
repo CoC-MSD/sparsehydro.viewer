@@ -258,8 +258,25 @@ def test_calibrate_explore_compare_save_reload(window, qtbot, sample_frame, samp
 
     # Compare: both runs ticked; scoring fills information criteria.
     compare = window.pages[5]
+    window.nav.setCurrentRow(5)
     compare.refresh()
-    assert compare.table.rowCount() == 2
+
+    def row_of(key) -> int:
+        return next(r for r in range(compare.table.rowCount())
+                    if compare.table.item(r, 0).data(Qt.ItemDataRole.UserRole) == key)
+
+    head = [compare.table.horizontalHeaderItem(c).text() for c in range(compare.table.columnCount())]
+    # ... and the working model, scored like a run at its slider values: a row, a star, a line, a hydrograph.
+    assert compare.table.rowCount() == 3
+    w = row_of("working-model")
+    name = f"Working model: {s.model_spec.display_label}"
+    assert name in compare.table.item(w, 0).text()
+    live = window.ctx.controller.last
+    assert float(compare.table.item(w, head.index("cal NSE")).text()) == pytest.approx(live.stats_cal["NSE"], abs=1e-3)
+    assert compare.table.item(w, head.index("MSDGC grade")).text() == ""  # graded with Score runs
+    assert compare.pareto._marker == pytest.approx(live.calibration.objectives) and compare.pareto._marker_label == name
+    assert compare.parallel._extra["__n_params__"] == live.n_calibrated == 3
+    assert len(compare._working_star) == 2
     compare._score()
     window.ctx.jobs.wait(20000)
     qtbot.waitUntil(lambda: len(compare._scores) == 2, timeout=20000)
@@ -269,7 +286,9 @@ def test_calibrate_explore_compare_save_reload(window, qtbot, sample_frame, samp
     grades = [sc.grade for sc in compare._scores.values()]
     assert all(g in ("pass", "conditional", "fail") for g in grades)
     col = [compare.table.horizontalHeaderItem(c).text() for c in range(compare.table.columnCount())].index("MSDGC grade")
-    assert all(compare.table.item(r, col).text() for r in range(2))
+    assert all(compare.table.item(row_of(r.id), col).text() for r in runs)
+    assert compare._working_grade.grade in ("pass", "conditional", "fail")
+    assert compare.table.item(row_of("working-model"), col).text()
     compare.grade_filter.setCurrentIndex(1)  # pass only
     shown = [r for r in compare._selected_runs() if compare._passes_filter(r)]
     assert len(shown) == sum(g == "pass" for g in grades)
@@ -278,6 +297,14 @@ def test_calibrate_explore_compare_save_reload(window, qtbot, sample_frame, samp
     # Chosen solutions: drawn without scoring, over the whole record, one per ticked run, each with its own choice.
     qtbot.waitUntil(lambda: len([k for k in compare.ts._curves if k.startswith("run:")]) == 2, timeout=30000)
     assert compare.choices.rowCount() == 2 and compare.ts.minimumHeight() >= 260
+    assert "working-model" in compare.ts._curves and name in compare.ts.legend_toggle.names()
+    # A slider move re-scores the working model on the page in view at once, and its grade is withdrawn.
+    before = compare.table.item(row_of("working-model"), head.index("cal NSE")).text()
+    with qtbot.waitSignal(window.ctx.controller.result, timeout=15000):
+        s.set_values({"A": s.values["A"] * 0.5})
+    assert compare.table.item(row_of("working-model"), head.index("cal NSE")).text() != before
+    assert compare._working_grade is None and compare.table.item(row_of("working-model"), col).text() == ""
+    assert compare.pareto._marker == pytest.approx(window.ctx.controller.last.calibration.objectives)
     t0, t1 = compare.ts.data_range()
     assert t1 - t0 > 0.95 * (sample_frame["datetime"].iloc[-1] - sample_frame["datetime"].iloc[0]).total_seconds()
     r0 = runs[0]

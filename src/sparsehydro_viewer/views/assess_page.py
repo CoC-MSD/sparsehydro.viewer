@@ -22,7 +22,7 @@ from ..core.options import resolve_options
 from ..widgets import TimeseriesPlot
 from ..widgets.assess_scatter import AssessScatter
 from ..widgets.option_form import OptionForm
-from .common import num_item, page_header, text_item
+from .common import draw_working, num_item, page_header, text_item
 from .context import AppContext
 from .shell.page import Page
 
@@ -137,6 +137,8 @@ class AssessPage(Page):
                                             "critical flow volume and the peak fit of the largest storms (Con15)."))
         lay.addWidget(split, 1)
         self.last: AssessmentRun | None = None
+        self._shown_dataset: str | None = None
+        self.watch_working_model()
         for sig in (s.runsChanged, s.projectChanged, s.modelChanged, s.modelRenamed, s.datasetChanged):
             sig.connect(self.refresh_sources)
         self.refresh_sources()
@@ -162,6 +164,11 @@ class AssessPage(Page):
             return ""
         g = GRADE_STYLE[self.last.result.grade][0]
         return f"MSDGC: {g}" + ("" if self.last.result.official else " (provisional)") + f" - {self.last.source}"
+
+    def working_model_changed(self, res) -> None:
+        """The working model at its current values, beside the assessed model's hydrograph."""
+        s = self.ctx.session
+        draw_working(self.plot, res, s, show=self.last is not None and self._shown_dataset == s.dataset_name)
 
     # ------------------------------------------------------------------ sources
 
@@ -220,6 +227,7 @@ class AssessPage(Page):
 
     def show_run(self, run: AssessmentRun, dataset: str | None = None) -> None:
         self.last = run
+        self._shown_dataset = dataset
         res = run.result
         inputs = f"{dataset}: {self.ctx.session.inputs_text(dataset)}" if dataset else ""
         text, symbol, color = GRADE_STYLE[res.grade]
@@ -250,7 +258,9 @@ class AssessPage(Page):
         t = epoch_seconds(run.datetime)
         self._t = t
         self.plot.set_data(t, run.rain, run.observed)
-        self.plot.set_curve("sim", t, run.simulated, color=theme.current().predicted, name=run.source)
+        self.plot.remove_curve("sim")  # its name is the assessed model's
+        self.plot.set_curve("sim", t, run.simulated, color=theme.current().selection, name=f"Assessed: {run.source}")
+        self.working_model_changed(self.ctx.controller.last)
         spans = [(float(t[int(e.start_idx)]), float(t[min(int(e.end_idx), len(t) - 1)]))
                  for e in res.events.itertuples() if bool(e.included)]
         self.plot.set_spans(spans)

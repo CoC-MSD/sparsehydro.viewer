@@ -41,7 +41,7 @@ from ..core.events import MODES, EventAnalysis, EventConfig, EventOverrides, eve
 from ..core.uh import KernelCurve
 from ..widgets import OptionForm, TimeseriesPlot
 from ..widgets.legend import ToggleLegend
-from .common import num_item, page_header, text_item
+from .common import draw_working, num_item, page_header, text_item
 from .context import AppContext
 from .shell.page import Page
 
@@ -277,6 +277,11 @@ class EventsPage(Page):
         s.datasetChanged.connect(self._dataset_changed)
         s.datasetChanged.connect(self.contextChanged)
         self._group_changed()
+        self.watch_working_model()
+
+    def working_model_changed(self, res) -> None:
+        """The working model's hydrograph over the fitted configurations."""
+        draw_working(self.fit_plot, res, self.ctx.session, show=self.analysis is not None)
 
     # ------------------------------------------------------------------ shell
 
@@ -613,6 +618,7 @@ class EventsPage(Page):
         if peak > 0:
             self.weight_plot.set_curve("flow", t, flow / peak * max(pw, tw, 1.0), color=th.observed, width=1,
                                        dashed=True, name="Storm flow (scaled)")
+        self.working_model_changed(self.ctx.controller.last)
         self._draw_spans()
 
     def _draw_spans(self) -> None:

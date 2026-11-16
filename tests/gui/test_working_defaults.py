@@ -119,3 +119,42 @@ def test_no_selection_or_no_parameter_sets_is_refused(loaded) -> None:
     run.add_report(1, 16, run.pareto_F)  # a report without parameter sets
     with pytest.raises(ValueError, match="no stored parameter sets"):
         s.use_solution_as_defaults(SolutionRef("a", 0, 0))
+
+
+def test_working_model_is_drawn_on_the_views_and_follows_the_sliders(loaded, qtbot) -> None:
+    window = loaded
+    s = window.ctx.session
+    explore = window.explore
+    calibrate = next(p for p in window.pages if p.title == "Calibrate")
+    s.set_model(s.run("a").model)  # scored with the run's objectives, on its parameters
+    window.show_explore("a")
+    name = f"Working model: {s.model_spec.display_label}"
+    qtbot.waitUntil(lambda: "working-model" in explore.ts._curves, timeout=20000)
+    assert name in explore.ts.legend_toggle.names()
+    assert explore.pareto._marker_label == name and explore.parallel._extra_label == name
+
+    # A slider move redraws the page in view at once ...
+    y0 = explore.ts._curves["working-model"].getData()[1].copy()
+    with qtbot.waitSignal(window.ctx.controller.result, timeout=15000):
+        s.set_values({"A": s.values["A"] * 0.5})
+    y1 = explore.ts._curves["working-model"].getData()[1]
+    assert not np.allclose(np.nan_to_num(y0), np.nan_to_num(y1))
+    assert explore.pareto._marker == pytest.approx(window.ctx.controller.last.calibration.objectives)
+    # ... hiding it in the legend survives the redraw ...
+    explore.ts.legend_toggle.set_visible(name, False)
+    with qtbot.waitSignal(window.ctx.controller.result, timeout=15000):
+        s.set_values({"A": s.values["A"] * 1.5})
+    assert not explore.ts._curves["working-model"].isVisible()
+    # ... and a page that was hidden catches up when it is shown.
+    assert calibrate._working_stale
+    window.nav.setCurrentRow(window.pages.index(calibrate))
+    qtbot.waitUntil(lambda: not calibrate._working_stale)
+    calibrate._monitor_id = "a"
+    calibrate._draw_monitor()
+    assert calibrate.front._marker == pytest.approx(window.ctx.controller.last.calibration.objectives)
+    assert calibrate.front._marker_label == name
+
+    # Renaming the model renames its entries.
+    window.show_explore("a")
+    s.set_model_label("Renamed")
+    assert "Working model: Renamed" in explore.ts.legend_toggle.names()

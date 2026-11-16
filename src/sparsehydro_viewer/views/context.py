@@ -39,6 +39,7 @@ class LiveController(QObject):
         session.valuesChanged.connect(self._values)
         live.evaluated.connect(self._evaluated)
         live.failed.connect(self.unavailable)
+        self.unavailable.connect(self._forget)
 
     def _configure(self) -> None:
         s = self.session
@@ -58,6 +59,9 @@ class LiveController(QObject):
     def _values(self, values: dict) -> None:
         if self.session.dataset is not None and not self._reconfigure_timer.isActive():
             self.live.request(values)
+
+    def _forget(self, _msg: str = "") -> None:
+        self.last = None  # nothing to draw for the working model until it evaluates again
 
     def _evaluated(self, res: LiveResult) -> None:
         self.last = res

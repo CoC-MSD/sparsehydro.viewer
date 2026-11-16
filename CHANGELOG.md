@@ -8,6 +8,13 @@ All notable changes are documented here. The format follows
 
 ### Added
 
+- The working model is an entry on every view, named "Working model: <name>" and redrawn with every slider
+  move on the page in view (other pages catch up when shown): a dashed, legend-toggleable hydrograph on
+  Explore, Compare, Events and Assess; a star on the Pareto plots of Explore, Compare and Calibrate; a line
+  in the parallel coordinates of Explore and Compare; and on Compare a star in the complexity plot and its
+  own table row with its objectives, calibration and validation NSE and RMSE, AIC and BIC, scored as the
+  sliders move. "Score runs" also grades it with the MSDGC criteria; the grade is withdrawn when the model
+  or its values change.
 - Working model panel: "Use selected solution as defaults" applies the solution selected in any chart (a
   point of a Pareto plot, a line of the parallel coordinates, a point of an earlier generation) as the
   working model's values and its defaults; the button's menu offers the knee and the best solutions of the

@@ -103,6 +103,47 @@ def history_layers(run, upto: int | None = None, color: str = "#888888"):
     return layers
 
 
+#: Key of the working model's curve in every hydrograph, its row in tables.
+WORKING_KEY = "working-model"
+
+
+def working_name(session) -> str:
+    """Legend name of the working model, the same on every page: ``Working model: <its name>``."""
+    return f"Working model: {session.model_spec.display_label}"
+
+
+def draw_working(plot, res, session, *, show: bool = True) -> None:
+    """Draw the working model's simulated flow on a hydrograph (dashed, toggleable in the legend).
+
+    The curve covers the calibration period and, when the dataset has one, the validation period: what the
+    live evaluation simulates with every slider move.
+
+    :param plot: A :class:`~sparsehydro_viewer.widgets.TimeseriesPlot`.
+    :param res: Latest live result; ``None`` (or ``show=False``) removes the curve.
+    """
+    import numpy as np
+
+    from .. import theme
+    from ..core.data import epoch_seconds
+
+    plot.remove_curve(WORKING_KEY)  # the name follows the model's name
+    if res is None or not show:
+        return
+    parts = [(np.asarray(epoch_seconds(res.datetime), float), np.asarray(res.calibration.predicted, float))]
+    if res.validation is not None and res.val_datetime is not None:
+        parts.append((np.asarray(epoch_seconds(res.val_datetime), float),
+                      np.asarray(res.validation.predicted, float)))
+    parts = sorted((p for p in parts if len(p[0])), key=lambda p: p[0][0])
+    if not parts:
+        return
+    t, y = parts[0]
+    for t2, y2 in parts[1:]:
+        if t2[0] > t[-1]:  # a gap between the periods: do not join them
+            t, y = np.r_[t, (t[-1] + t2[0]) / 2.0, t2], np.r_[y, np.nan, y2]
+    plot.set_curve(WORKING_KEY, t, y, color=theme.current().predicted, width=2.0, dashed=True,
+                   name=working_name(session))
+
+
 def hbox(*widgets: QWidget, stretch_last: bool = False) -> QHBoxLayout:
     lay = QHBoxLayout()
     for w in widgets:
