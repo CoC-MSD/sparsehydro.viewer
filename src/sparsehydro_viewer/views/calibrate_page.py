@@ -75,6 +75,10 @@ class CalibratePage(Page):
         self.solver = QComboBox()
         for e in SOLVERS.entries():
             self.solver.addItem(e.label, e.name)
+            self.solver.setItemData(self.solver.count() - 1, e.description, Qt.ItemDataRole.ToolTipRole)
+        self.solver.setToolTip("Optimization algorithm; multi-objective ones return a Pareto front, single-objective "
+                               "ones one solution")
+        self.solver.setAccessibleName("Optimizer")
         self.solver_desc = QLabel()
         self.solver_desc.setWordWrap(True)
         self.solver_desc.setObjectName("hint")
@@ -91,7 +95,11 @@ class CalibratePage(Page):
         # -- launch ---------------------------------------------------------------
         self.label = QLineEdit()
         self.label.setPlaceholderText("run label (optional)")
+        self.label.setToolTip("Name of the next run (default: the model's name and a number)")
+        self.label.setAccessibleName("Run label")
         self.run_btn = QPushButton("Run calibration")
+        self.run_btn.setToolTip("Start a calibration of the working model in its own process  [toolbar Run]")
+        self.obj_list.setAccessibleName("Objectives")
         self.run_btn.setObjectName("primary")
         self.run_btn.clicked.connect(self._run)
         self.launch_hint = QLabel()
@@ -117,6 +125,8 @@ class CalibratePage(Page):
         # -- runs table + monitors -----------------------------------------------
         self.table = QTableWidget(0, len(RUN_COLUMNS))
         self.table.setHorizontalHeaderLabels(RUN_COLUMNS)
+        self.table.setAccessibleName("Calibration runs")
+        self.table.setToolTip("Select a run to monitor it; double-click to explore it")
         self.table.verticalHeader().setVisible(False)
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)

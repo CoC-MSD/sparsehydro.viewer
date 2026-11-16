@@ -98,6 +98,8 @@ class SitesPage(Page):
 
         # -- time series ------------------------------------------------------------
         self.datasets = QComboBox()
+        self.datasets.setToolTip("Dataset shown on the chart (also the analysis dataset of every page)")
+        self.datasets.setAccessibleName("Dataset shown")
         self.datasets.currentTextChanged.connect(lambda n: n and s.select_dataset(n))
         self.cal = PeriodEditor("Calibration", PERIOD_COLORS["calibration"])
         self.val = PeriodEditor("Validation", PERIOD_COLORS["validation"])

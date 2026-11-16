@@ -131,7 +131,12 @@ class ModelComposer(QWidget):
 
         self.add_btn = QToolButton()
         self.add_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.add_btn.setToolTip("Add a child component (for example another unit hydrograph) to the selected one")
+        self.add_btn.setAccessibleName("Add component")
+        self.type_btn.setAccessibleName("Component type")
+        self.alias.setAccessibleName("Term prefix")
         self.remove_btn = QPushButton("Remove")
+        self.remove_btn.setToolTip("Remove the selected component and its children")
         self.remove_btn.clicked.connect(self._remove)
         self.up_btn = QPushButton("↑")
         self.up_btn.setToolTip("Move up")

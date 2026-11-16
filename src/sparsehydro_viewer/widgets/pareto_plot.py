@@ -50,6 +50,9 @@ class ParetoPlot(QWidget):
         self.labels = labels or {}
         self.better = better or {}
         self.x_combo, self.y_combo = QComboBox(), QComboBox()
+        for combo, axis in ((self.x_combo, "horizontal"), (self.y_combo, "vertical")):
+            combo.setToolTip(f"Objective on the {axis} axis")
+            combo.setAccessibleName(f"Objective on the {axis} axis")
         row = QHBoxLayout()
         row.addWidget(QLabel("x"))
         row.addWidget(self.x_combo, 1)

@@ -32,6 +32,7 @@ from ..resources import icon
 from ..services import CalibrationService, JobManager, LiveEvaluationService
 from ..session import Session
 from ..widgets import ParameterPanel
+from .accessibility import apply_accessible_defaults
 from .assess_page import AssessPage
 from .calibrate_page import CalibratePage
 from .common import num_item, text_item
@@ -76,6 +77,8 @@ class MainWindow(QMainWindow):
         self.nav = QListWidget()
         self.nav.setObjectName("navRail")
         self.nav.setFixedWidth(118)
+        self.nav.setAccessibleName("Workspaces")
+        self.nav.setToolTip("Workspaces (Ctrl+1 to Ctrl+7)")
         self.stack = QStackedWidget()
         self.explore = ExplorePage(self.ctx)
         self.pages: list[Page] = [
@@ -87,7 +90,7 @@ class MainWindow(QMainWindow):
         for i, page in enumerate(self.pages):
             self.stack.addWidget(page)
             item = QListWidgetItem(icon(page.icon_name), page.title)
-            item.setToolTip(f"Ctrl+{i + 1}")
+            item.setToolTip(f"{page.title} workspace  [Ctrl+{i + 1}]")
             item.setSizeHint(QSize(100, 40))
             self.nav.addItem(item)
             page.contextChanged.connect(lambda p=page: self._page_context_changed(p))
@@ -132,7 +135,9 @@ class MainWindow(QMainWindow):
         self.job_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.job_table.horizontalHeader().setStretchLastSection(True)
         self.job_table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
+        self.job_table.setAccessibleName("Background jobs")
         cancel = QPushButton("Cancel selected job")
+        cancel.setToolTip("Stop the background job selected in the list (calibrations stop on the Calibrate page)")
         cancel.clicked.connect(self._cancel_job)
         jw = QWidget()
         jl = QVBoxLayout(jw)
@@ -190,6 +195,7 @@ class MainWindow(QMainWindow):
         self._update_param_context()
         self._update_status()
         self._update_title()
+        apply_accessible_defaults(self)
 
     # ------------------------------------------------------------------ menus
 
@@ -200,12 +206,18 @@ class MainWindow(QMainWindow):
             act.triggered.connect(lambda *_: slot())
             if shortcut is not None:
                 act.setShortcut(QKeySequence(shortcut))
-            act.setToolTip(tip or text.replace("&", "").rstrip("."))
+            tip = tip or text.replace("&", "").rstrip(".")
+            keys = act.shortcut().toString(QKeySequence.SequenceFormat.NativeText)
+            act.setToolTip(f"{tip}  [{keys}]" if keys else tip)
+            act.setStatusTip(tip)
             return act
 
-        self.new_action = make("&New project", self.new_project, "new", QKeySequence.StandardKey.New)
-        self.open_action = make("&Open project...", self.open_project_dialog, "open", QKeySequence.StandardKey.Open)
-        self.save_action = make("&Save project", self.save_project, "save", QKeySequence.StandardKey.Save)
+        self.new_action = make("&New project", self.new_project, "new", QKeySequence.StandardKey.New,
+                               "Start a new, empty project (asks to save the current one first)")
+        self.open_action = make("&Open project...", self.open_project_dialog, "open", QKeySequence.StandardKey.Open,
+                                "Open a project file (.shproj) or a project folder saved by an earlier version")
+        self.save_action = make("&Save project", self.save_project, "save", QKeySequence.StandardKey.Save,
+                                "Save the project (sites, data, models and runs) to its file")
         self.param_toggle = self.param_dock.toggleViewAction()
         self.param_toggle.setIcon(icon("sliders"))
         self.param_toggle.setToolTip("Show or hide the working-model parameters")
@@ -222,23 +234,29 @@ class MainWindow(QMainWindow):
         self._fill_recent()
         f.addSeparator()
         f.addAction(self.save_action)
-        self._add(f, "Save project &as...", self.save_project_as, QKeySequence.StandardKey.SaveAs)
+        self._add(f, "Save project &as...", self.save_project_as, QKeySequence.StandardKey.SaveAs,
+                  "Save the project to a new file")
         f.addSeparator()
-        self._add(f, "E&xit", self.close, QKeySequence.StandardKey.Quit)
+        self._add(f, "E&xit", self.close, QKeySequence.StandardKey.Quit, "Close the application")
         v = mb.addMenu("&View")
         v.addAction(self.param_toggle)
         v.addAction(self.activity_toggle)
         v.addSeparator()
-        self._add(v, "&Light theme", lambda: self.set_theme("light"))
-        self._add(v, "&Dark theme", lambda: self.set_theme("dark"))
+        for name, label in theme.THEME_LABELS.items():
+            self._add(v, label, lambda _=False, n=name: self.set_theme(n),
+                      tip="Black background, white text and a yellow accent" if name == "high-contrast"
+                      else f"Use the {name} colour theme")
         h = mb.addMenu("&Help")
-        self._add(h, "&About", self.about)
+        self._add(h, "&About", self.about, tip="Version, credits and the versions of the libraries in use")
 
-    def _add(self, menu, text, slot, shortcut=None) -> QAction:
+    def _add(self, menu, text, slot, shortcut=None, tip: str | None = None) -> QAction:
         act = menu.addAction(text)
         act.triggered.connect(slot)
         if shortcut is not None:
             act.setShortcut(QKeySequence(shortcut))
+        if tip:
+            act.setStatusTip(tip)
+            act.setToolTip(tip)
         return act
 
     def _fill_recent(self) -> None:
@@ -381,6 +399,7 @@ class MainWindow(QMainWindow):
         self.toolbar.set_page(page)
         self.status.bind_chart(page.active_chart())
         self._update_status()
+        apply_accessible_defaults(page)  # pages build some controls lazily
 
     def _page_context_changed(self, page: Page) -> None:
         if hasattr(self, "toolbar") and page is self.current_page():
@@ -442,7 +461,7 @@ class MainWindow(QMainWindow):
         self.nav.setCurrentRow(self.pages.index(self.explore))
 
     def set_theme(self, name: str) -> None:
-        theme.apply(QApplication.instance(), theme.DARK if name == "dark" else theme.LIGHT)
+        theme.apply(QApplication.instance(), theme.by_name(name))
         self.settings.setValue("theme", name)
         QMessageBox.information(self, APP_NAME, "Plots pick up the new theme when they are next redrawn; restart "
                                                 "the application to restyle everything.")

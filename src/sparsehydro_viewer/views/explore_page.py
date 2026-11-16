@@ -92,6 +92,8 @@ class ExplorePage(Page):
         super().__init__(ctx)
         s = ctx.session
         self.run_box = QComboBox()
+        self.run_box.setToolTip("Calibration run whose Pareto set is explored")
+        self.run_box.setAccessibleName("Run to explore")
         self.run_box.currentIndexChanged.connect(self._run_changed)
         self.info = QLabel()
         self.info.setObjectName("hint")
@@ -117,6 +119,7 @@ class ExplorePage(Page):
         self.ts = TimeseriesPlot()
         self.uh = UHPreview(show_table=False)
         self.params = QTableWidget(0, 5)
+        self.params.setAccessibleName("Parameters of the selected solution")
         self.params.setHorizontalHeaderLabels(["Parameter", "Value", "Lower", "Upper", "Position"])
         self.params.verticalHeader().setVisible(False)
         self.params.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)

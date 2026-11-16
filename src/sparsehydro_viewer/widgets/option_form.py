@@ -32,10 +32,28 @@ class OptionForm(QWidget):
         self._editors = {}
         for s in self._specs:
             w = self._editor(s)
-            w.setToolTip(s.doc)
+            w.setToolTip(self._tooltip(s))
+            w.setAccessibleName(s.display_label)
+            if s.doc:
+                w.setAccessibleDescription(s.doc)
             self._editors[s.name] = w
             self.layout_.addRow(s.display_label, w)
         self.set_values(values or {})
+
+    @staticmethod
+    def _tooltip(s: OptionSpec) -> str:
+        """The option's description, plus its range and default where they help."""
+        parts = [s.doc or s.display_label]
+        if s.kind in ("int", "float"):
+            if s.minimum is not None and s.maximum is not None:
+                parts.append(f"Range: {s.minimum:g} to {s.maximum:g}")
+            elif s.minimum is not None:
+                parts.append(f"At least {s.minimum:g}")
+            elif s.maximum is not None:
+                parts.append(f"At most {s.maximum:g}")
+        if s.default is not None and s.kind != "choice":
+            parts.append(f"Default: {s.default}")
+        return "\n".join(parts)
 
     def _editor(self, s: OptionSpec) -> QWidget:
         if s.kind == "int":

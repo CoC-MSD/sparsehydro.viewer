@@ -82,6 +82,13 @@ All notable changes are documented here. The format follows
   report (`core.diagnostics.front_history`, exact hypervolume up to four objectives).
 - OMOPSO (Platypus) optimizer: multi-objective particle swarm with an ε-dominance archive; options for swarm and
   leader sizes, ε (one value for all objectives), mutation probability, evaluations, seed and report interval.
+- Accessibility and finish: every control has an accessible name for screen readers and, where its purpose is not
+  written on it, a tooltip (parameter sliders and values say what the parameter is, its range, units and whether
+  the slider is logarithmic; option fields give their description, range and default; toolbar actions show their
+  shortcut and a status-bar tip). Controls without an explicit name are named from their label, text, tooltip or
+  group (`views/accessibility.py`). A high-contrast theme (black, white, yellow accent) joins light and dark, and
+  every theme meets WCAG 2 AA contrast (4.5:1 for text, 3:1 for plotted lines); in the dark theme, text on the
+  accent colour is now dark (white was 2.7:1). Tests check names, tooltips, keyboard reach and contrast.
 - `sparsehydro-viewer --self-test REPORT` checks an installation (every unit hydrograph, composed models and their
   traces, small calibrations in spawned worker processes, a project round trip, the main window) and writes a
   report; optional components such as the Platypus optimizers are reported as unavailable without failing. The

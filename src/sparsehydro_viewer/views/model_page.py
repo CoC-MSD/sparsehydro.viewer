@@ -52,6 +52,8 @@ class ModelPage(Page):
         self.composer.changed.connect(self._structure_edited)
         self.name = QLineEdit()
         self.name.setPlaceholderText("model name (optional)")
+        self.name.setToolTip("Name of the working model, used for runs started from it")
+        self.name.setAccessibleName("Model name")
         self.name.editingFinished.connect(lambda: s.set_model_label(self.name.text().strip()))
         self.counts = QLabel()
         builder_scroll = QScrollArea()
@@ -79,6 +81,7 @@ class ModelPage(Page):
         bl.addLayout(row)
 
         self.metrics = QTableWidget(0, 3)
+        self.metrics.setAccessibleName("Objectives of the working model")
         self.metrics.setHorizontalHeaderLabels(["Objective", "Calibration", "Validation"])
         self.metrics.verticalHeader().setVisible(False)
         self.metrics.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)

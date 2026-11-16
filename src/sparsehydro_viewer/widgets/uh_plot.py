@@ -27,6 +27,7 @@ class UHPreview(QWidget):
         theme.plain_axes(self.plot)
         self.legend = self.plot.addLegend(offset=(-10, 10), labelTextColor=theme.current().plot_fg)
         self.table = QTableWidget(0, 0)
+        self.table.setAccessibleName("Unit hydrograph shape statistics")
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)

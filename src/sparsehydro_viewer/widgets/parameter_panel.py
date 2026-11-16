@@ -85,6 +85,7 @@ class ParameterRow:
         self.reset = QToolButton()
         self.reset.setText("↺")
         self.reset.setToolTip(f"Reset to default ({info.default:.4g})")
+        self._describe(tip, unit)
         self._configure_range()
         self.set_value(info.value)
         self.slider.valueChanged.connect(self._slider_moved)
@@ -93,6 +94,20 @@ class ParameterRow:
         self.lo_edit.editingFinished.connect(self._bounds_edited)
         self.hi_edit.editingFinished.connect(self._bounds_edited)
         self.reset.clicked.connect(lambda: self._user_value(self.info.default))
+
+    def _describe(self, description: str, unit: str) -> None:
+        """Tooltips and screen-reader names for every control of the row."""
+        n = self.name
+        scale = "logarithmic" if self.log else "linear"
+        bounds = f"{self.lower:.4g} to {self.upper:.4g}{unit}"
+        self.slider.setToolTip(f"{n}: {description}\nRange {bounds} ({scale} slider). Arrow keys step, "
+                               "Page Up/Down jump.")
+        self.spin.setToolTip(f"{n}: {description}\nType a value within {bounds}.")
+        for w, what in ((self.check, "calibrate"), (self.slider, "slider"), (self.spin, "value"),
+                        (self.lo_edit, "lower bound"), (self.hi_edit, "upper bound"), (self.reset, "reset to default")):
+            w.setAccessibleName(f"{n} {what}")
+        self.slider.setAccessibleDescription(f"{description}; {scale} scale from {bounds}")
+        self.label.setBuddy(self.spin)
 
     def widgets(self) -> list[QWidget]:
         return [self.check, self.label, self.lo_edit, self.slider, self.hi_edit, self.spin, self.reset]
@@ -150,6 +165,7 @@ class ParameterRow:
         value = self.value()
         self.lower, self.upper = lo, hi
         self.log = use_log_scale(lo, hi)
+        self._describe(self.info.description or self.name, f" [{self.info.units}]" if self.info.units else "")
         self._configure_range()
         self.set_value(min(max(value, lo), hi))
         self.panel.boundsEdited.emit(self.name, lo, hi)
@@ -168,6 +184,8 @@ class _Section(QWidget):
         self.header.setCheckable(True)
         self.header.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.header.setStyleSheet("QToolButton { border: none; font-weight: 600; text-align: left; }")
+        self.header.setToolTip(f"Show or hide the {n} parameter(s) of {title}")
+        self.header.setAccessibleName(f"{title} parameters")
         self.header.toggled.connect(self.set_expanded)
         self.body = QWidget()
         self.grid = QGridLayout(self.body)
@@ -228,11 +246,15 @@ class ParameterPanel(QWidget):
         self.filter.setPlaceholderText("Filter parameters...")
         self.filter.setClearButtonEnabled(True)
         self.filter.textChanged.connect(self._apply_filter)
+        self.filter.setToolTip("Show only the parameters whose name contains this text")
+        self.filter.setAccessibleName("Filter parameters")
         expand = QToolButton()
         expand.setText("Expand all")
+        expand.setToolTip("Show the parameters of every component")
         expand.clicked.connect(lambda: self._expand_all(True))
         collapse = QToolButton()
         collapse.setText("Collapse all")
+        collapse.setToolTip("Hide the parameters of every component (headers stay)")
         collapse.clicked.connect(lambda: self._expand_all(False))
         reset = QPushButton("Reset all")
         reset.setToolTip("Restore default values, bounds and calibrate flags")

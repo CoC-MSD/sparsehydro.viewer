@@ -18,11 +18,14 @@ class PeriodEditor(QWidget):
         super().__init__()
         self.enabled = QCheckBox(title)
         self.enabled.setStyleSheet(f"QCheckBox {{ color: {color}; font-weight: 600; }}")
+        self.enabled.setToolTip(f"Use a {title.lower()} period (unticked: the whole record)")
         self.start, self.end = QDateTimeEdit(), QDateTimeEdit()
-        for e in (self.start, self.end):
+        for e, end in ((self.start, "Start"), (self.end, "End")):
             e.setDisplayFormat("yyyy-MM-dd HH:mm")
             e.setCalendarPopup(True)
             e.editingFinished.connect(self.edited)
+            e.setToolTip(f"{end} of the {title.lower()} period (or drag on the chart)")
+            e.setAccessibleName(f"{title} {end.lower()}")
         lay = QHBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.enabled)

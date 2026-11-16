@@ -108,6 +108,8 @@ class AssessPage(Page):
                                    "Obs. conveyance [MG]", "Model conveyance [MG]", "Obs. event [MG]",
                                    "Model event [MG]", "Obs. peak [cfs]", "Model peak [cfs]"])
         self.events.setSortingEnabled(True)
+        self.events.setAccessibleName("Events of the assessment")
+        self.events.setToolTip("Select an event to zoom the hydrograph to it; click a column header to sort")
         self.events.itemSelectionChanged.connect(self._event_selected)
         self.plot = TimeseriesPlot()
         events_tab = QSplitter(Qt.Orientation.Vertical)
