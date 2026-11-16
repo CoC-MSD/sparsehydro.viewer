@@ -8,6 +8,8 @@ All notable changes are documented here. The format follows
 
 ### Added
 
+- Developer credit for Caleb Buahin and partnership credit for MSDGC and Hazen and Sawyer
+  in the About dialog, package metadata, Windows installer and documentation.
 - Application shell: one standard toolbar on every page (project, Run/Stop for the page's command, chart
   navigation bound to the page's active chart, page-specific actions) and a standard status bar (message,
   context, cursor readout, activity with a global progress bar). SVG icon set, tinted to the theme.

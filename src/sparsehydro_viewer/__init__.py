@@ -16,5 +16,7 @@ except PackageNotFoundError:  # running from a source tree without installation
 
 APP_NAME = "SparseHydro Viewer"
 ORG_NAME = "sparsehydro"
+DEVELOPER_NAME = "Caleb Buahin"
+PARTNERSHIP = "A partnership between MSDGC and Hazen and Sawyer."
 
-__all__ = ["APP_NAME", "ORG_NAME", "__version__"]
+__all__ = ["APP_NAME", "DEVELOPER_NAME", "ORG_NAME", "PARTNERSHIP", "__version__"]

@@ -9,7 +9,7 @@
 AppId={{6E0F2B54-6A5B-4C77-9D51-2C4B1C8F3A10}
 AppName=SparseHydro Viewer
 AppVersion={#AppVersion}
-AppPublisher=sparsehydro contributors
+AppPublisher=MSDGC and Hazen and Sawyer
 AppPublisherURL=https://github.com/CoC-MSD/sparsehydro.viewer
 DefaultDirName={autopf}\SparseHydro Viewer
 DefaultGroupName=SparseHydro Viewer

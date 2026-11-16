@@ -39,6 +39,23 @@ def _context_texts(win) -> list[str]:
     return [a.text() for a in win.toolbar._context if not a.isSeparator()]
 
 
+def test_about_credits_developer_and_partnership(window, monkeypatch) -> None:
+    messages = []
+
+    def capture(parent, title, text):
+        messages.append((parent, title, text))
+
+    monkeypatch.setattr("sparsehydro_viewer.views.main_window.QMessageBox.about", capture)
+    window.about()
+
+    assert len(messages) == 1
+    parent, title, text = messages[0]
+    assert parent is window and title == "SparseHydro Viewer"
+    assert "Developer: Caleb Buahin" in text
+    assert "A partnership between MSDGC and Hazen and Sawyer." in text
+    assert "sparsehydro " in text and "PySide6 " in text and "pyqtgraph " in text
+
+
 def test_toolbar_is_the_same_everywhere_with_contextual_actions(window) -> None:
     tb = window.toolbar
     fixed = [tb.run_action, tb.stop_action, *tb.chart.actions()]

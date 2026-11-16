@@ -7,6 +7,13 @@ first-class axis, so the most parsimonious adequate model stands out.
 
 Built on PySide6 (Qt for Python) and pyqtgraph.
 
+## Credits
+
+**Developer:** Caleb Buahin.
+
+A partnership between **MSDGC** (Metropolitan Sewer District of Greater Cincinnati)
+and **Hazen and Sawyer**.
+
 ## Install
 
 ```bash

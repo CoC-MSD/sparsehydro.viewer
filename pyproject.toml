@@ -5,12 +5,12 @@ build-backend = "hatchling.build"
 [project]
 name = "sparsehydro-viewer"
 dynamic = ["version"]
-description = "Desktop workbench for building, calibrating and comparing sparsehydro models."
+description = "Desktop workbench for building, calibrating and comparing sparsehydro models. A partnership between MSDGC and Hazen and Sawyer."
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE", "THIRD_PARTY_NOTICES.md"]
 requires-python = ">=3.10"
-authors = [{ name = "sparsehydro contributors" }]
+authors = [{ name = "Caleb Buahin" }]
 keywords = ["hydrology", "unit hydrograph", "rdii", "calibration", "pareto", "qt"]
 classifiers = [
     "Development Status :: 3 - Alpha",
