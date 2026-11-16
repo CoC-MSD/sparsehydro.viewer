@@ -80,6 +80,8 @@ All notable changes are documented here. The format follows
   fainter the older they are, and a slider replays the run report by report (it follows a running calibration
   until dragged back). The convergence chart can also show the front's size and its normalised hypervolume per
   report (`core.diagnostics.front_history`, exact hypervolume up to four objectives).
+- OMOPSO (Platypus) optimizer: multi-objective particle swarm with an ε-dominance archive; options for swarm and
+  leader sizes, ε (one value for all objectives), mutation probability, evaluations, seed and report interval.
 - `sparsehydro-viewer --self-test REPORT` checks an installation (every unit hydrograph, composed models and their
   traces, small calibrations in spawned worker processes, a project round trip, the main window) and writes a
   report; optional components such as the Platypus optimizers are reported as unavailable without failing. The

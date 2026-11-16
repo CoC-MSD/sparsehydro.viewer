@@ -75,6 +75,24 @@ def _smpso(o: dict[str, Any], cb: Callback | None) -> Any:
                    seed=o["seed"], record_frequency=o["record_frequency"], callback=cb)
 
 
+class _OMOPSO:
+    """OMOPSO through sparsehydro's particle-swarm solver; one ε for every objective, expanded at solve time
+    (the number of objectives is known only from the problem)."""
+
+    def __init__(self, o: dict[str, Any], cb: Callback | None) -> None:
+        self.options, self.callback = dict(o), cb
+
+    def solve(self, problem: Any) -> Any:
+        o = self.options
+        # OMOPSO's non-uniform mutation shrinks over max_iterations: match it to the evaluation budget.
+        iterations = max(1, int(o["n_evaluations"]) // max(1, int(o["swarm_size"])))
+        solver = _create("pso", swarm_size=o["swarm_size"], leader_size=o["leader_size"],
+                         n_evaluations=o["n_evaluations"], seed=o["seed"], record_frequency=o["record_frequency"],
+                         epsilons=[float(o["epsilon"])] * int(problem.n_objectives), callback=self.callback,
+                         mutation_probability=float(o["mutation_probability"]), max_iterations=iterations)
+        return solver.solve(problem)
+
+
 def _scipy(o: dict[str, Any], _cb: Callback | None) -> Any:
     return _create("scipy", method=o["method"], objective_index=o["objective_index"], maxiter=o["maxiter"],
                    seed=o["seed"])
@@ -115,6 +133,23 @@ def _entries() -> list[SolverEntry]:
         SolverEntry("smpso", "SMPSO (Platypus)", "Speed-constrained multi-objective particle swarm.", True, True,
                     (OptionSpec("swarm_size", "int", 100, label="Swarm size", minimum=4), _EVALS, _SEED, _RECORD),
                     _smpso),
+        SolverEntry(
+            "omopso", "OMOPSO (Platypus)",
+            "Multi-objective particle swarm with an ε-dominance archive: the front keeps one solution per ε-box, "
+            "so ε sets how finely the trade-off is resolved.", True, True,
+            (OptionSpec("swarm_size", "int", 100, label="Swarm size", minimum=4, maximum=10_000,
+                        doc="Particles moved at each iteration."),
+             OptionSpec("leader_size", "int", 100, label="Leaders", minimum=2, maximum=10_000,
+                        doc="Size of the archive the particles are guided by."),
+             OptionSpec("epsilon", "float", 0.01, label="ε (all objectives)", minimum=1e-9, maximum=1e6,
+                        doc="Resolution of the archive in objective units, the same for every objective; smaller "
+                            "keeps more solutions."),
+             OptionSpec("mutation_probability", "float", 0.1, label="Mutation probability", minimum=0.0, maximum=1.0,
+                        doc="Chance of mutating each particle at each iteration (Platypus default 0.1); the "
+                            "mutation's size shrinks as the evaluation budget is used up."),
+             _EVALS, _SEED, _RECORD),
+            _OMOPSO,
+        ),
         SolverEntry(
             "scipy", "SciPy (single objective)",
             "Scalar optimiser on one objective; returns one solution. No progress reporting.", False, False,

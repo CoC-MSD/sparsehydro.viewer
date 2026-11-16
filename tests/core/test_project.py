@@ -110,7 +110,9 @@ def test_run_record_helpers() -> None:
 
 @pytest.mark.slow
 @pytest.mark.parametrize("solver", [SolverSpec("nsga2", {"pop_size": 8, "n_gen": 3}),
-                                    SolverSpec("scipy", {"method": "Nelder-Mead", "maxiter": 20})])
+                                    SolverSpec("scipy", {"method": "Nelder-Mead", "maxiter": 20}),
+                                    SolverSpec("omopso", {"swarm_size": 10, "leader_size": 10, "epsilon": 0.05,
+                                                          "n_evaluations": 80, "record_frequency": 2})])
 def test_run_calibration_inline(short_frame, solver) -> None:
     messages: list[tuple[str, dict]] = []
     spec = spec_for("gamma-uh")
