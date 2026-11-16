@@ -55,6 +55,9 @@ class MainToolBar(QToolBar):
         self.chart = ChartActions(parent)
         for a in self.chart.actions():
             self.addAction(a)
+            button = self.widgetForAction(a)
+            if a.menu() is not None and isinstance(button, QToolButton):
+                button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)  # e.g. Series
         self._context_start = self.addSeparator()
         self._context: list[QAction] = []
         self._context_end = self.addSeparator()

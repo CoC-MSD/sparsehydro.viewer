@@ -49,6 +49,12 @@ class ChartActions(QObject):
         self.auto_y = _action(self, "Auto Y", "Auto Y: rescale the flow axis to the visible data "
                                               "(off: zoom y freely)", "auto-y", checkable=True)
         self.export = _action(self, "Export chart...", "Export the chart as a PNG image", "export")
+        # The keyboard route to what clicking a legend symbol does (legend symbols cannot take focus).
+        self.series = _action(self, "Series", "Show or hide the chart's series (the same as clicking their legend "
+                                              "symbols)", "components")
+        self._series_menu = QMenu()
+        self._series_menu.aboutToShow.connect(self._fill_series_menu)
+        self.series.setMenu(self._series_menu)
         self.auto_y.setChecked(True)
         self.pan.setChecked(True)
         self.pan.triggered.connect(lambda: self._set_mode("pan"))
@@ -59,7 +65,15 @@ class ChartActions(QObject):
         self.bind(None)
 
     def actions(self) -> list[QAction]:
-        return [self.pan, self.zoom, self.fit, self.auto_y, self.export]
+        return [self.pan, self.zoom, self.fit, self.auto_y, self.series, self.export]
+
+    def _fill_series_menu(self) -> None:
+        self._series_menu.clear()
+        toggle = getattr(self.plot, "legend_toggle", None)
+        if toggle is None or not toggle.names():
+            self._series_menu.addAction("No series").setEnabled(False)
+            return
+        toggle.fill_menu(self._series_menu)
 
     def bind(self, plot: TimeseriesPlot | None) -> None:
         """Make the actions act on *plot* (``None`` disables them)."""
@@ -73,6 +87,7 @@ class ChartActions(QObject):
             a.setEnabled(plot is not None)
         # The map uses the same tools, but has no y axis to rescale.
         self.auto_y.setEnabled(plot is not None and getattr(plot, "supports_auto_y", True))
+        self.series.setEnabled(plot is not None and hasattr(plot, "legend_toggle"))
         if plot is not None:
             plot.modeChanged.connect(self._mode_changed)
             self._mode_changed(plot.mode)

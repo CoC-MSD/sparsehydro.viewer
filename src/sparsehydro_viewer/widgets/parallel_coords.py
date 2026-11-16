@@ -23,6 +23,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QGraphicsRectItem, QMenu, QVBoxLayout, QWidget
 
 from .. import theme
+from .legend import ToggleLegend
 
 AXIS_HIT = 0.18  # fraction of axis spacing that counts as "on the axis"
 
@@ -88,7 +89,7 @@ class _ViewBox(pg.ViewBox):
             if axis is not None:
                 self.owner._clear_brush(axis)
             else:
-                self.owner._pick_line(p)
+                self.owner._pick_line(p, add=bool(ev.modifiers() & Qt.KeyboardModifier.ControlModifier))
 
 
 class ParallelCoordinates(QWidget):
@@ -100,6 +101,8 @@ class ParallelCoordinates(QWidget):
 
     selectionChanged = Signal(list)
     rowClicked = Signal(int)
+    #: A clicked row and whether Ctrl was held (add to / remove from the selection).
+    rowPicked = Signal(int, bool)
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -108,11 +111,14 @@ class ParallelCoordinates(QWidget):
         self.view.hideAxis("left")
         self.view.hideAxis("bottom")
         self.legend = self.view.addLegend(offset=(-10, -10), labelTextColor=theme.current().plot_fg)
+        #: Legend entries switch groups (runs), the selection and the slider line on and off.
+        self.legend_toggle = ToggleLegend(self.legend, self)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.addWidget(self.view)
         self.s = _State()
         self._highlight: list[int] = []
+        self._primary: int | None = None
         self._extra: dict[str, float] | None = None
         self._extra_label = "current"
         self._brush_items: dict[int, QGraphicsRectItem] = {}
@@ -149,8 +155,10 @@ class ParallelCoordinates(QWidget):
         self._redraw()
         self.selectionChanged.emit(self.selected_rows())
 
-    def set_highlight(self, rows: list[int]) -> None:
-        self._highlight = list(rows)
+    def set_highlight(self, rows: list[int], primary: int | None = None) -> None:
+        """Draw *rows* as selected (each its own line); *primary* (default: the first) is drawn thickest."""
+        self._highlight = list(dict.fromkeys(rows))
+        self._primary = primary if primary in self._highlight else (self._highlight[0] if self._highlight else None)
         self._redraw()
 
     def set_extra_line(self, values: dict[str, float] | None, label: str = "current") -> None:
@@ -203,7 +211,12 @@ class ParallelCoordinates(QWidget):
     def _redraw(self) -> None:
         self.view.clear()
         self.legend.clear()
+        self.legend_toggle.clear()
         self._brush_items.clear()
+
+        def add(item, name: str | None):
+            self.view.addItem(item)
+            self.legend_toggle.register(name, item)
         th = theme.current()
         order = self.s.order
         m = len(order)
@@ -235,20 +248,27 @@ class ParallelCoordinates(QWidget):
             c = QColor(self.s.group_colors[g % len(self.s.group_colors)])
             c.setAlpha(alpha)
             x, y = polyline(rows)
-            self.view.addItem(pg.PlotDataItem(x, y, pen=pg.mkPen(c, width=1.3), connect="finite",
-                                              name=label or None))
-        if self._highlight:
-            x, y = polyline([r for r in self._highlight if r < n])
-            self.view.addItem(pg.PlotDataItem(x, y, pen=pg.mkPen(th.selection, width=3), connect="finite",
-                                              name="selected"))
+            add(pg.PlotDataItem(x, y, pen=pg.mkPen(c, width=1.3), connect="finite", name=label or None),
+                label or None)
+        shown = [r for r in self._highlight if r < n]
+        others = [r for r in shown if r != self._primary]
+        if others:  # one item (one legend entry) for the rest of the selection, then the primary on top
+            x, y = polyline(others)
+            add(pg.PlotDataItem(x, y, pen=pg.mkPen(th.selection, width=2), connect="finite",
+                                name=f"selected ({len(shown)})"), "selected")
+        if self._primary is not None and self._primary < n:
+            x, y = polyline([self._primary])
+            add(pg.PlotDataItem(x, y, pen=pg.mkPen(th.selection, width=3.5), connect="finite",
+                                symbol="o", symbolSize=6, symbolBrush=th.selection,
+                                name="selected" if not others else "primary"),
+                "selected" if not others else "primary")
         if self._extra:
             names = [a.name for a in self.s.axes]
             ys = [float(self._norm_col(np.array([self._extra[names[i]]]), i)[0]) if names[i] in self._extra
                   else np.nan for i in order]
-            self.view.addItem(pg.PlotDataItem(xs, ys, pen=pg.mkPen(th.predicted, width=2.5,
-                                                                    style=Qt.PenStyle.DashLine),
-                                              symbol="o", symbolSize=6, symbolBrush=th.predicted,
-                                              connect="finite", name=self._extra_label))
+            add(pg.PlotDataItem(xs, ys, pen=pg.mkPen(th.predicted, width=2.5, style=Qt.PenStyle.DashLine),
+                                symbol="o", symbolSize=6, symbolBrush=th.predicted, connect="finite",
+                                name=self._extra_label), self._extra_label)
         axis_pen = pg.mkPen(th.plot_fg, width=1)
         for k, i in enumerate(order):
             a = self.s.axes[i]
@@ -304,7 +324,7 @@ class ParallelCoordinates(QWidget):
             self._redraw()
             self.selectionChanged.emit(self.selected_rows())
 
-    def _pick_line(self, p: QPointF) -> None:
+    def _pick_line(self, p: QPointF, add: bool = False) -> None:
         norm = self._normalised()
         if not norm.size:
             return
@@ -321,6 +341,7 @@ class ParallelCoordinates(QWidget):
         j = int(np.nanargmin(d))
         if d[j] < 0.05:
             self.rowClicked.emit(int(rows[j]))
+            self.rowPicked.emit(int(rows[j]), add)
 
     def _axis_menu(self, axis: int, pos) -> None:
         a = self.s.axes[axis]

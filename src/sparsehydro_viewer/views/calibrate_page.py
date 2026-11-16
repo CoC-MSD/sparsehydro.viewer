@@ -34,6 +34,7 @@ from ..core.objectives import OBJECTIVES, ObjectiveSpec
 from ..core.runs import RunRecord, new_id
 from ..core.solvers import SOLVERS, SolverSpec
 from ..widgets import OptionForm, ParetoLayer, ParetoPlot
+from ..widgets.legend import ToggleLegend
 from .common import num_item, objective_better, objective_labels, page_header, text_item
 from .context import AppContext
 from .shell.page import Page
@@ -155,6 +156,7 @@ class CalibratePage(Page):
         self.conv_obj.setAccessibleName("Convergence measure")
         self.conv_obj.currentIndexChanged.connect(self._draw_monitor)
         self.conv_legend = self.conv.addLegend(offset=(-10, 10), labelTextColor=theme.current().plot_fg)
+        self.conv_toggle = ToggleLegend(self.conv_legend, self)  # runs can be hidden when several are overlaid
         conv_box = QGroupBox("Convergence")
         cl = QVBoxLayout(conv_box)
         cl.addWidget(self.conv_obj)
@@ -564,6 +566,7 @@ class CalibratePage(Page):
         runs = self._monitored()
         self.conv.clear()
         self.conv_legend.clear()
+        self.conv_toggle.clear()
         if not runs or not runs[0].objective_names:
             self.front.set_layers([])
             self.generation_label.setText("")
@@ -597,8 +600,9 @@ class CalibratePage(Page):
                     y.append(m if flags[j] else -m)
             else:
                 continue
-            self.conv.plot(x, y, pen=pg.mkPen(color, width=2), symbol="o", symbolSize=4, connect="finite",
-                           name=None if single else run.label)
+            item = self.conv.plot(x, y, pen=pg.mkPen(color, width=2), symbol="o", symbolSize=4, connect="finite",
+                                  name=None if single else run.label)
+            self.conv_toggle.register(None if single else run.label, item)
         self._draw_fronts(runs, single)
 
     def _draw_fronts(self, runs: list[RunRecord], single: bool) -> None:

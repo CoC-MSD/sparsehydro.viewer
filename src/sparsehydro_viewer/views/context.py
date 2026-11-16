@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
+from ..core.simulate import SimulationCache
 from ..services import CalibrationService, JobManager, LiveEvaluationService, LiveResult
 from ..session import Session
 
@@ -70,3 +71,9 @@ class AppContext:
     calibration: CalibrationService
     live: LiveEvaluationService
     controller: LiveController
+    #: Simulated series of solutions, shared by Explore and Compare (see :mod:`..core.simulate`).
+    sim_cache: SimulationCache = field(default_factory=SimulationCache)
+
+    def __post_init__(self) -> None:
+        self.session.runUpdated.connect(self.sim_cache.drop_run)
+        self.session.projectChanged.connect(self.sim_cache.clear)

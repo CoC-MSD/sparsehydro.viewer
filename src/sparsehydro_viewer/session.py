@@ -18,6 +18,7 @@ from .core.data import DatasetSpec, Period
 from .core.objectives import ObjectiveSpec
 from .core.project import Project
 from .core.runs import RunRecord
+from .core.selection import SolutionRef, SolutionSelection
 from .core.solvers import SolverSpec
 
 
@@ -36,7 +37,11 @@ class Session(QObject):
     objectivesChanged = Signal()
     runsChanged = Signal()
     runUpdated = Signal(str)
-    selectionChanged = Signal(str, list)  # run id, solution indices
+    #: The solutions selected across the application (a :class:`~.core.selection.SolutionSelection`).
+    solutionSelectionChanged = Signal(object)
+    #: Run id whose filter (the solutions passing a parallel-coordinates brush) changed.
+    solutionFilterChanged = Signal(str)
+    selectionChanged = Signal(str, list)  # primary run id and its selected final-front indices (legacy view)
     dirtyChanged = Signal(bool)
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -46,9 +51,10 @@ class Session(QObject):
         self.dataset_name: str | None = None
         self.model_spec: ModelSpec = ModelSpec()
         self.values: dict[str, float] = {}
-        self.selected_run: str | None = None
+        self.selection = SolutionSelection()
+        #: Run id -> solution indices passing that run's brush (absent: no filter).
+        self.filter_rows: dict[str, list[int]] = {}
         self.selected_nodes: list[str] = []
-        self.selected_solutions: list[int] = []
         self._dirty = False
         self._reset_values()
 
@@ -67,7 +73,8 @@ class Session(QObject):
         else:
             self.model_spec = ModelSpec()
         self._reset_values()
-        self.selected_run, self.selected_solutions = None, []
+        self.selection = SolutionSelection()
+        self.filter_rows = {}
         self.selected_nodes = []
         self.set_dirty(False)
         self.projectChanged.emit()
@@ -317,8 +324,9 @@ class Session(QObject):
 
     def remove_runs(self, ids: list[str]) -> None:
         self.project.runs = [r for r in self.project.runs if r.id not in set(ids)]
-        if self.selected_run in ids:
-            self.selected_run, self.selected_solutions = None, []
+        for rid in ids:
+            self.filter_rows.pop(rid, None)
+        self._apply_selection(self.selection.pruned(r.id for r in self.project.runs))
         self.set_dirty()
         self.runsChanged.emit()
 
@@ -330,15 +338,68 @@ class Session(QObject):
         except KeyError:
             return None
 
-    def select(self, run_id: str | None, indices: list[int]) -> None:
-        self.selected_run = run_id
-        self.selected_solutions = list(indices)
-        self.selectionChanged.emit(run_id or "", list(indices))
+    # ------------------------------------------------------------------ solution selection
+    #
+    # One selection for the whole application. Charts never talk to each other: a click, Ctrl+click, rubber band
+    # or brush in any of them writes the selection here, and every chart redraws from solutionSelectionChanged.
 
-    def load_solution(self, run_id: str, index: int) -> None:
-        """Make a run's model the working model with solution *index*'s values."""
+    def _apply_selection(self, selection: SolutionSelection, *, force: bool = False) -> None:
+        if selection == self.selection and not force:
+            return
+        self.selection = selection
+        self.solutionSelectionChanged.emit(selection)
+        self.selectionChanged.emit(self.selected_run or "", list(self.selected_solutions))
+
+    def set_selection(self, refs, primary: SolutionRef | None = None) -> None:
+        """Select exactly *refs* (across runs); *primary* (default: the last) drives the detail views."""
+        self._apply_selection(self.selection.replaced(refs, primary))
+
+    def select_in_run(self, run_id: str, refs, primary: SolutionRef | None = None, *, add: bool = False) -> None:
+        """Replace (or with *add*, extend) one run's selected solutions; other runs keep theirs."""
+        self._apply_selection(self.selection.with_run(run_id, refs, primary, add=add))
+
+    def toggle_selected(self, ref: SolutionRef) -> None:
+        """Ctrl+click: add *ref* to the selection, or remove it if it is selected."""
+        self._apply_selection(self.selection.toggled(ref))
+
+    def clear_selection(self) -> None:
+        self._apply_selection(SolutionSelection())
+
+    def set_filter(self, run_id: str, rows: list[int] | None) -> None:
+        """Record the solutions of a run that pass its brush (``None``: no filter), for every view of that run."""
+        if rows is None:
+            if self.filter_rows.pop(run_id, None) is None:
+                return
+        else:
+            if self.filter_rows.get(run_id) == list(rows):
+                return
+            self.filter_rows[run_id] = list(rows)
+        self.solutionFilterChanged.emit(run_id)
+
+    @property
+    def selected_run(self) -> str | None:
+        """Run of the primary selected solution."""
+        return self.selection.primary.run_id if self.selection.primary else None
+
+    @property
+    def selected_solutions(self) -> list[int]:
+        """Selected final-front indices of the primary run, the primary one first."""
+        run_id = self.selected_run
+        return self.selection.indices(run_id) if run_id else []
+
+    def select(self, run_id: str | None, indices: list[int]) -> None:
+        """Select final-front solutions of one run (the first is primary); always notifies."""
+        if run_id is None:
+            self._apply_selection(SolutionSelection(), force=True)
+            return
+        refs = [SolutionRef(run_id, int(i)) for i in indices]
+        self._apply_selection(self.selection.with_run(run_id, refs, refs[0] if refs else None), force=True)
+
+    def load_solution(self, run_id: str, index: int, generation: int | None = None) -> None:
+        """Make a run's model the working model with a solution's values."""
         run = self.project.run(run_id)
-        self.set_model(run.model, run.solution_values(index))
+        self.set_model(run.model, run.solution_values(index) if generation is None
+                       else run.solution_values(index, generation))
 
     # ------------------------------------------------------------------ misc
 

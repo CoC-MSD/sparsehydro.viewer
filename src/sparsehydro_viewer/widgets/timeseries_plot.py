@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 
 from .. import theme
+from .legend import ToggleLegend
 
 
 def _pen(color: str, width: float = 1.5, style: Qt.PenStyle = Qt.PenStyle.SolidLine) -> pg.QtGui.QPen:
@@ -93,12 +94,16 @@ class TimeseriesPlot(pg.GraphicsLayoutWidget):
         if self.rain_plot is not None:
             self.rain_plot.setXLink(self.flow_plot)
         self.legend = self.flow_plot.addLegend(offset=(-10, 10), labelTextColor=t.plot_fg)
+        #: Legend entries switch their series on and off; hidden series stay hidden across redraws.
+        self.legend_toggle = ToggleLegend(self.legend, self)
+        self._panel_toggles: dict[str, ToggleLegend] = {}
         for p in self._plots():
             theme.plain_axes(p)
             p.setClipToView(True)
             p.setDownsampling(auto=True, mode="peak")
         self._curves: dict[str, pg.PlotDataItem] = {}
         self._bands: dict[str, pg.FillBetweenItem] = {}
+        self._band_swatches: dict[str, pg.PlotDataItem] = {}
         self._stacks: dict[str, list] = {}
         self._spans: list[pg.LinearRegionItem] = []
         self._span_specs: list = []
@@ -160,8 +165,15 @@ class TimeseriesPlot(pg.GraphicsLayoutWidget):
             plot.setXLink(self.flow_plot)
             plot.setMinimumHeight(90)
             self.ci.layout.setRowStretchFactor(row, 1)
-            plot.addLegend(offset=(-10, 4), labelTextColor=th.plot_fg)
-            self._panels[key] = (plot, {name: plot.plot([], [], name=name) for name in names})
+            legend = plot.addLegend(offset=(-10, 4), labelTextColor=th.plot_fg)
+            curves = {name: plot.plot([], [], name=name) for name in names}
+            self._panels[key] = (plot, curves)
+            toggle = self._panel_toggles.get(key)
+            hidden = toggle.hidden if toggle is not None else set()
+            toggle = self._panel_toggles[key] = ToggleLegend(legend, self)
+            toggle.hidden = set(hidden)  # a rebuilt panel keeps what was hidden in it
+            for name, curve in curves.items():
+                toggle.register(name, curve)
         # Only the bottom panel shows dates.
         plots = [self.flow_plot] + [p for p, _ in self._panels.values()]
         for p in plots[:-1]:
@@ -201,6 +213,7 @@ class TimeseriesPlot(pg.GraphicsLayoutWidget):
         if observed is not None:
             self._obs_item = self.flow_plot.plot(self._t, np.asarray(observed, float), pen=_pen(th.observed, 1.2),
                                                  name=observed_label)
+            self.legend_toggle.register(observed_label, self._obs_item)
         self.auto_range()
 
     def set_curve(self, key: str, t: np.ndarray | None, y: np.ndarray | None, *, color: str, width: float = 1.6,
@@ -215,6 +228,7 @@ class TimeseriesPlot(pg.GraphicsLayoutWidget):
         if item is None:
             item = self.flow_plot.plot(t, np.asarray(y, float), pen=pen, name=name)
             self._curves[key] = item
+            self.legend_toggle.register(name, item)
         else:
             item.setData(t, np.asarray(y, float))
             item.setPen(pen)
@@ -227,6 +241,7 @@ class TimeseriesPlot(pg.GraphicsLayoutWidget):
                                    symbolSize=size, symbolBrush=color, symbolPen=pg.mkPen(theme.current().plot_bg),
                                    name=name)
         self._curves[key] = item
+        self.legend_toggle.register(name, item)
 
     def remove_curve(self, key: str) -> None:
         item = self._curves.pop(key, None)
@@ -240,7 +255,10 @@ class TimeseriesPlot(pg.GraphicsLayoutWidget):
         for k in list(self._bands):
             self.remove_band(k)
 
-    def set_band(self, key: str, t: np.ndarray | None, lower: np.ndarray, upper: np.ndarray, color: str) -> None:
+    def set_band(self, key: str, t: np.ndarray | None, lower: np.ndarray, upper: np.ndarray, color: str,
+                 name: str | None = None) -> None:
+        """Fill between *lower* and *upper* (e.g. the min and max of a set of solutions); *name* adds a
+        legend entry."""
         self.remove_band(key)
         t = self._t if t is None else np.asarray(t, float)
         lo = pg.PlotDataItem(t, np.asarray(lower, float), pen=None)
@@ -252,11 +270,20 @@ class TimeseriesPlot(pg.GraphicsLayoutWidget):
         # The fill's path starts empty at the origin; letting it into auto-range would stretch x back to 1970.
         self.flow_plot.addItem(band, ignoreBounds=True)
         self._bands[key] = band
+        if name:
+            # The legend draws a sample from a data item: a filled swatch stands for the band.
+            swatch = pg.PlotDataItem([0, 1], [1, 1], pen=_pen(color, 1.0), fillLevel=0.0, brush=c)
+            self.legend.addItem(swatch, name)
+            self._band_swatches[key] = swatch
+            self.legend_toggle.register(name, swatch, band)
 
     def remove_band(self, key: str) -> None:
         band = self._bands.pop(key, None)
         if band is not None:
             self.flow_plot.removeItem(band)
+        swatch = self._band_swatches.pop(key, None)
+        if swatch is not None:
+            self.legend.removeItem(swatch)
 
     def set_stack(self, key: str, t: np.ndarray | None, layers: list[tuple[str, np.ndarray, str]]) -> None:
         """Draw *layers* (``(label, series, colour)``) as stacked areas under the flow curves.
@@ -282,6 +309,7 @@ class TimeseriesPlot(pg.GraphicsLayoutWidget):
             upper_item.setZValue(-5)
             self.flow_plot.addItem(upper_item)
             items += [band, upper_item]
+            self.legend_toggle.register(label, upper_item, band)
             base, lower_item = top, upper_item
         self._stacks[key] = items
 

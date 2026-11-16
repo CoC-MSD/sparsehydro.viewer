@@ -80,6 +80,26 @@ All notable changes are documented here. The format follows
   fainter the older they are, and a slider replays the run report by report (it follows a running calibration
   until dragged back). The convergence chart can also show the front's size and its normalised hypervolume per
   report (`core.diagnostics.front_history`, exact hypervolume up to four objectives).
+- One solution selection across charts and pages. Explore and Compare share the session's selection
+  (`core/selection.py`): click a point or a line to select a solution, Ctrl+click to add or remove one, Shift+drag
+  a rectangle in the scatter, or brush an axis of the parallel coordinates to select everything that passes (the
+  brush also filters that run wherever it is shown); Esc clears. Every chart redraws from the selection, and what
+  is selected on one page is selected on the other.
+  - Explore draws one line per selected solution (up to 12, the primary one emphasised) over a filled band between
+    the minimum and maximum of the selection - or of the whole Pareto set when one solution is selected ("Pareto
+    range", with a legend entry). A "Selected" table lists every selected solution with its objectives and
+    parameters; clicking a row makes it the primary one that the parameters, unit hydrograph and components show.
+    With nothing selected the knee is shown by default, without selecting it elsewhere.
+  - Compare's parallel coordinates and fronts are now clickable and brushable: a click also makes that solution the
+    run's chosen one; the chart shows each run's Pareto range as a band, its chosen solution, and any other
+    selected solutions as thinner lines.
+  - Simulations of selected solutions are shared and cached (`core/simulate.py`), so returning to a solution or
+    opening it on the other page is immediate.
+- Clickable legends on every chart: clicking a legend symbol hides or shows its series, including everything
+  drawn for it (a band's fill, a stacked component's fill and edge, all earlier-generation layers together), and a
+  hidden series stays hidden when the chart redraws (slider moves, new selections, rebuilt state panels). Bands
+  now have legend entries. The toolbar's chart group gains **Series**, a menu of the active chart's series with
+  tick boxes and "Show all" - the keyboard route to the same thing (`widgets/legend.py`).
 - User documentation (Sphinx, built on the sparsehydro docs setup): installation, a getting-started tutorial on the
   sample data, one page per workspace, keyboard shortcuts, and reference pages for the project file and its
   water-ontology mapping, the MSDGC criteria, extensions, the architecture and the `core` API. Screenshots are

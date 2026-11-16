@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QHeaderView, QSplitter, QTableWidget, QTableWidget
 
 from .. import theme
 from ..core.uh import KernelCurve, display_hours
+from .legend import ToggleLegend
 
 
 class UHPreview(QWidget):
@@ -26,6 +27,7 @@ class UHPreview(QWidget):
         self.plot.showGrid(x=True, y=True, alpha=0.15)
         theme.plain_axes(self.plot)
         self.legend = self.plot.addLegend(offset=(-10, 10), labelTextColor=theme.current().plot_fg)
+        self.legend_toggle = ToggleLegend(self.legend, self)  # click a legend symbol to hide or show a curve
         self.table = QTableWidget(0, 0)
         self.table.setAccessibleName("Unit hydrograph shape statistics")
         self.table.verticalHeader().setVisible(False)
@@ -71,6 +73,7 @@ class UHPreview(QWidget):
     def _redraw(self) -> None:
         self.plot.clear()
         self.legend.clear()
+        self.legend_toggle.clear()
         all_curves = list(self._current) + [c for _, c in self._pinned]
         horizon = self._fixed_horizon or display_hours(all_curves) * 1.05
         th = theme.current()
@@ -82,11 +85,13 @@ class UHPreview(QWidget):
                 y, color, width = c.ordinates, th.predicted, 2.4
             else:
                 y, color, width = c.ordinates * c.weight / total_weight, theme.series_color(i), 1.3
-            self.plot.plot(np.r_[0.0, c.t_hours], np.r_[0.0, y], pen=pg.mkPen(color, width=width),
-                           name=c.label if multi else "current")
+            name = c.label if multi else "current"
+            item = self.plot.plot(np.r_[0.0, c.t_hours], np.r_[0.0, y], pen=pg.mkPen(color, width=width), name=name)
+            self.legend_toggle.register(name, item)
         for j, (label, c) in enumerate(self._pinned):
             pen = pg.mkPen(theme.series_color(j + 1), width=1.4, style=Qt.PenStyle.DashLine)
-            self.plot.plot(np.r_[0.0, c.t_hours], np.r_[0.0, c.ordinates], pen=pen, name=label)
+            item = self.plot.plot(np.r_[0.0, c.t_hours], np.r_[0.0, c.ordinates], pen=pen, name=label)
+            self.legend_toggle.register(label, item)
         self.plot.setXRange(0, horizon, padding=0)
         self.plot.enableAutoRange(axis="y")
         self._fill_table(all_curves, [c.label if multi else "current" for c in self._current]

@@ -24,10 +24,12 @@ from PySide6.QtWidgets import (
 )
 
 from .. import theme
-from ..core.data import epoch_seconds
+from ..core.data import Period, epoch_seconds
 from ..core.diagnostics import ComplexityPoint, complexity_front, fit_statistics
 from ..core.evaluation import Evaluator
 from ..core.runs import RunRecord
+from ..core.selection import SolutionRef
+from ..core.simulate import SolutionSeries, simulate_solutions
 from ..widgets import AxisSpec, ParallelCoordinates, ParetoLayer, ParetoPlot, TimeseriesPlot
 from ..widgets.timeseries_plot import PERIOD_COLORS
 from .common import num_item, objective_better, objective_labels, page_header, text_item
@@ -71,30 +73,6 @@ def grade_run(run: RunRecord, index: int, frame, dataset, attributes: dict, opti
                               run.objectives, source=run.label).result
     except Exception:  # noqa: BLE001 - e.g. no events in the period: the run is simply not graded
         return None
-
-
-@dataclass
-class _Hydrograph:
-    """One chosen solution simulated over its dataset's whole record."""
-
-    run_id: str
-    index: int
-    dataset: str
-    t: np.ndarray
-    rain: np.ndarray
-    observed: np.ndarray
-    predicted: np.ndarray
-
-
-def simulate_whole_record(run: RunRecord, frame, index: int) -> _Hydrograph:
-    """Solution *index* of *run* over the whole record (not only a period), for the chosen-solutions chart."""
-    from ..core.data import Period
-
-    ev = Evaluator(run.model, frame, run.objectives, Period())
-    ev.evaluate(run.fixed_values)
-    res = ev.evaluate_vector(run.param_names, run.pareto_X[index])
-    return _Hydrograph(run.id, index, run.dataset, epoch_seconds(ev.datetime), np.asarray(ev.rain, float),
-                       np.asarray(ev.observed, float), np.asarray(res.predicted, float))
 
 
 def solution_choices(run: RunRecord) -> list[tuple[str, str]]:
@@ -266,14 +244,25 @@ class ComparePage(Page):
         self._seen: set[str] = set()
         self._scores: dict[str, _Score] = {}
         self._choice: dict[str, str] = {}  # run id -> "knee" | "best:<objective>" | "index:<i>"
-        self._hydrographs: dict[tuple[str, int], _Hydrograph] = {}
+        #: Simulated flow by (run id, solution index), for every solution drawn so far.
+        self._hydrographs: dict[tuple[str, int], np.ndarray] = {}
+        self._series: dict[str, SolutionSeries] = {}  # run id -> what the chart draws for it
+        self._drawn_want: dict | None = None
+        self._row_index: list[tuple[str, int]] = []
         self._sim_job = None
-        self._sim_errors: dict[tuple[str, int], str] = {}
+        self._sim_errors: dict[str, str] = {}
         self._filling = False
+        self._filling_parallel = False
         s.runsChanged.connect(self.refresh)
         s.runUpdated.connect(lambda _rid: self.refresh())
         s.projectChanged.connect(self._reset)
-        self.parallel.rowClicked.connect(self._row_clicked)
+        # Selection is the session's: these charts write it and redraw from it, as Explore's do.
+        s.solutionSelectionChanged.connect(self._selection_changed)
+        self.parallel.rowPicked.connect(self._row_clicked)
+        self.parallel.selectionChanged.connect(self._brush_changed)
+        self.pareto.pointPicked.connect(self._pick)
+        self.pareto.rangeSelected.connect(self._pareto_range)
+        self.pareto.selectionCleared.connect(s.clear_selection)
         self.refresh()
 
     # ------------------------------------------------------------------ data
@@ -284,6 +273,8 @@ class ComparePage(Page):
         self._scores.clear()
         self._choice.clear()
         self._hydrographs.clear()
+        self._series.clear()
+        self._drawn_want = None
         self._sim_errors.clear()
         self.refresh()
 
@@ -536,7 +527,7 @@ class ComparePage(Page):
         axes = [AxisSpec(PARAMS_AXIS, "parameters", "min", kind="count")]
         axes += [AxisSpec(n, labels.get(n, n), obj_better.get(n) or None, kind="objective") for n in objs]
         blocks, groups = [], []
-        self._row_index: list[tuple[str, int]] = []
+        self._row_index = []
         for g, run in enumerate(runs):
             D = run.display_F()
             cols = [D[:, run.objective_names.index(n)] for n in objs]
@@ -544,16 +535,21 @@ class ComparePage(Page):
             groups += [g] * run.n_solutions
             self._row_index += [(run.id, i) for i in range(run.n_solutions)]
         data = np.vstack(blocks) if blocks else np.empty((0, len(axes)))
-        self.parallel.set_data(axes, data, groups=np.asarray(groups, dtype=int),
-                               group_labels=[r.label for r in runs],
-                               group_colors=[theme.series_color(self._color_index(r.id)) for r in runs])
+        self._filling_parallel = True  # set_data reports its rows: a redraw, not a new brush
+        try:
+            self.parallel.set_data(axes, data, groups=np.asarray(groups, dtype=int),
+                                   group_labels=[r.label for r in runs],
+                                   group_colors=[theme.series_color(self._color_index(r.id)) for r in runs],
+                                   keep_brushes=True)
+        finally:
+            self._filling_parallel = False
         self.pareto.set_layers([ParetoLayer(r.id, r.label, r.display_F(), r.objective_names,
                                             theme.series_color(self._color_index(r.id)), knee=self._solution_index(r))
                                 for r in runs])
 
-        # -- chosen solutions: list and hydrographs (simulated in the background)
+        # -- chosen solutions: list and hydrographs (simulated in the background); selection marks
         self._fill_choices(runs)
-        self._sim_timer.start()
+        self._selection_changed()
 
     # ------------------------------------------------------------------ chosen solutions
 
@@ -580,42 +576,55 @@ class ComparePage(Page):
     def chosen_runs(self) -> list[tuple[RunRecord, int]]:
         return [(r, self._solution_index(r)) for r in self._selected_runs() if self._passes_filter(r)]
 
-    def _simulate_chosen(self) -> None:
-        """Simulate the chosen solutions not yet cached, then redraw the chart."""
-        s = self.ctx.session
-        todo = []
+    def _wanted(self) -> dict[str, tuple[SolutionRef, ...]]:
+        """Per drawn run: its chosen solution first, then the solutions selected in the charts."""
+        selection = self.ctx.session.selection
+        out = {}
         for run, idx in self.chosen_runs():
-            if (run.id, idx) in self._hydrographs:
-                continue
-            try:
-                todo.append((run, idx, s.frame(run.dataset)))
-            except Exception:  # noqa: BLE001 - dataset removed: the run is listed but not drawn
-                continue
-        if not todo:
+            chosen = SolutionRef(run.id, idx)
+            picked = [r for r in selection.of_run(run.id) if r.is_final and r != chosen]
+            out[run.id] = (chosen, *picked)
+        return out
+
+    def _simulate_chosen(self) -> None:
+        """Simulate what is not drawn yet (cached series make repeats instant), then redraw the chart."""
+        s = self.ctx.session
+        want = self._wanted()
+        if want == self._drawn_want:
             self._draw_hydrographs()
             return
         if self._sim_job is not None:
-            return  # the running job redraws when done, then picks up what is missing
+            return  # the running job redraws when done, then picks up what changed meanwhile
+        jobs = []
+        for run, _idx in self.chosen_runs():
+            try:
+                jobs.append((run, s.frame(run.dataset), list(want[run.id])))
+            except Exception:  # noqa: BLE001 - dataset removed: the run is listed but not drawn
+                continue
+        cache = self.ctx.sim_cache
 
         def work(ctx):
-            out = []
-            for i, (run, idx, frame) in enumerate(todo):
+            out = {}
+            for i, (run, frame, refs) in enumerate(jobs):
                 if ctx.cancelled:
                     break
-                ctx.progress(f"simulating {run.label}", i / len(todo))
+                ctx.progress(f"simulating {run.label}", i / max(len(jobs), 1))
                 try:
-                    out.append(simulate_whole_record(run, frame, idx))
+                    out[run.id] = simulate_solutions(
+                        run, frame, refs, Period(), primary=refs[0], band_rows=list(range(run.n_solutions)),
+                        band_label=f"{run.label}: Pareto range", cache=cache)
                 except Exception as exc:  # noqa: BLE001 - reported in the chart note
-                    out.append((run.id, idx, f"{type(exc).__name__}: {exc}"))
+                    out[run.id] = f"{type(exc).__name__}: {exc}"
             return out
 
-        def done(results) -> None:
+        def done(results: dict) -> None:
             self._sim_job = None
-            for h in results:
-                if isinstance(h, _Hydrograph):
-                    self._hydrographs[(h.run_id, h.index)] = h
-                else:
-                    self._sim_errors[(h[0], h[1])] = h[2]
+            self._series = {k: v for k, v in results.items() if not isinstance(v, str)}
+            self._sim_errors = {k: v for k, v in results.items() if isinstance(v, str)}
+            for rid, series in self._series.items():
+                for ref, y in series.lines.items():
+                    self._hydrographs[(rid, ref.index)] = y
+            self._drawn_want = want
             self._simulate_chosen()
 
         def failed(_msg: str) -> None:
@@ -624,27 +633,37 @@ class ComparePage(Page):
         self._sim_job = self.submit_job("Simulate chosen solutions", work, on_done=done, on_error=failed)
 
     def _draw_hydrographs(self) -> None:
-        """Observed and rain of the analysis dataset (or the first run's), every chosen solution on it."""
+        """Observed and rain of the analysis dataset (or the first run's); per run on it, the Pareto range as a
+        band, the chosen solution, and the solutions selected in the charts."""
         self.ts.clear_curves()
-        chosen = [(r, i) for r, i in self.chosen_runs() if (r.id, i) in self._hydrographs]
-        if not chosen:
+        s = self.ctx.session
+        drawn = [(r, i) for r, i in self.chosen_runs() if r.id in self._series]
+        if not drawn:
             self.ts_note.setText("Tick runs to compare their chosen solutions." if not self._selected_runs()
                                  else "")
             return
-        s = self.ctx.session
-        names = [r.dataset for r, _ in chosen]
+        names = [r.dataset for r, _ in drawn]
         base_name = s.dataset_name if s.dataset_name in names else names[0]
-        base = next(self._hydrographs[(r.id, i)] for r, i in chosen if r.dataset == base_name)
+        base = next(self._series[r.id] for r, _ in drawn if r.dataset == base_name)
         self.ts.set_data(base.t, base.rain, base.observed, f"Observed ({base_name})")
         others = []
-        for n, (run, idx) in enumerate(chosen):
-            h = self._hydrographs[(run.id, idx)]
-            if h.dataset != base_name:
+        for n, (run, idx) in enumerate(drawn):
+            series = self._series[run.id]
+            if run.dataset != base_name:
                 others.append(run.label)
                 continue
+            color = theme.series_color(self._color_index(run.id))
+            if series.band is not None:
+                self.ts.set_band(f"band:{run.id}", series.t, series.band[0], series.band[1], color,
+                                 name=series.band_label)
             label = dict(solution_choices(run)).get(self.choice(run), f"solution #{idx + 1}")
-            self.ts.set_curve(f"run:{run.id}", h.t, h.predicted, color=theme.series_color(self._color_index(run.id)),
-                              width=1.8, dashed=n % 2 == 1, name=f"{run.label}: {label}")
+            for k, (ref, y) in enumerate(series.lines.items()):
+                if k == 0:  # the run's chosen solution
+                    self.ts.set_curve(f"run:{run.id}", series.t, y, color=color, width=2.0, dashed=n % 2 == 1,
+                                      name=f"{run.label}: {label}")
+                else:  # solutions selected in the charts
+                    self.ts.set_curve(f"sel:{run.id}:{ref.index}", series.t, y, color=color, width=1.1,
+                                      dashed=k % 2 == 1, name=f"{run.label}: solution {ref.label()}")
         spans = []
         try:
             ds = s.project.dataset(base_name)
@@ -661,14 +680,58 @@ class ComparePage(Page):
         notes = []
         if others:
             notes.append(f"Not drawn (other datasets than {base_name}): {', '.join(others)}.")
-        errors = [msg for (rid, _), msg in self._sim_errors.items() if rid in self._checked]
+        errors = [msg for rid, msg in self._sim_errors.items() if rid in self._checked]
         if errors:
             notes.append("Could not simulate: " + "; ".join(errors))
         self.ts_note.setText(" ".join(notes))
 
-    def _row_clicked(self, row: int) -> None:
+    # ------------------------------------------------------------------ selection (shared with Explore)
+
+    def _pick(self, run_id: str, index: int, add: bool) -> None:
+        """A click selects that solution (and makes it the run's chosen one); Ctrl+click adds or removes it."""
+        s = self.ctx.session
+        ref = SolutionRef(run_id, index)
+        if add:
+            s.toggle_selected(ref)
+        else:
+            s.select_in_run(run_id, [ref], ref)
+            self.set_choice(run_id, f"index:{index}")
+
+    def _row_clicked(self, row: int, add: bool = False) -> None:
         if 0 <= row < len(self._row_index):
+            self._pick(*self._row_index[row], add)
+
+    def _pareto_range(self, picked: dict, add: bool) -> None:
+        s = self.ctx.session
+        for run_id, idx in picked.items():
+            s.select_in_run(run_id, [SolutionRef(run_id, int(i)) for i in idx], add=add)
+
+    def _brush_changed(self, rows: list[int]) -> None:
+        """A brush filters each run (everywhere it is shown) and selects the solutions that pass it."""
+        if self._filling_parallel or not self._row_index:
+            return
+        s = self.ctx.session
+        filtering = len(rows) < len(self._row_index)
+        by_run: dict[str, list[int]] = {r.id: [] for r in self._selected_runs()}
+        for row in rows:
             rid, idx = self._row_index[row]
-            self.ctx.session.select(rid, [idx])
-            self.set_choice(rid, f"index:{idx}")
-            self.parallel.set_highlight([row])
+            by_run.setdefault(rid, []).append(idx)
+        for rid, idx in by_run.items():
+            was = rid in s.filter_rows
+            s.set_filter(rid, idx if filtering else None)
+            if filtering:
+                s.select_in_run(rid, [SolutionRef(rid, i) for i in idx])
+            elif was:
+                s.select_in_run(rid, [])
+
+    def _selection_changed(self, _selection=None) -> None:
+        """Show the session's selection in both charts and draw the selected solutions' hydrographs."""
+        selection = self.ctx.session.selection
+        row_of = {pair: k for k, pair in enumerate(getattr(self, "_row_index", []))}
+        rows = [row_of[(r.run_id, r.index)] for r in selection.refs if r.is_final and (r.run_id, r.index) in row_of]
+        p = selection.primary
+        primary = row_of.get((p.run_id, p.index)) if p is not None and p.is_final else None
+        self.parallel.set_highlight(rows, primary)
+        marks = {rid: selection.indices(rid) for rid in selection.run_ids()}
+        self.pareto.set_selection(marks, primary=(p.run_id, p.index) if p is not None and p.is_final else None)
+        self._sim_timer.start()
