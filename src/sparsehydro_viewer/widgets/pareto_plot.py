@@ -21,6 +21,9 @@ class ParetoLayer:
     :ivar values: ``(n, m)`` objective values in natural form.
     :ivar names: Objective names for the columns of *values*.
     :ivar knee: Index of the knee solution, marked with a ring.
+    :ivar alpha: Fill opacity 0-255 (overrides *faded*), e.g. to fade earlier generations by age.
+    :ivar legend: Add a legend entry (off for all but one of a series of history layers).
+    :ivar clickable: Emit :attr:`ParetoPlot.pointClicked` for its points.
     """
 
     key: str
@@ -31,6 +34,9 @@ class ParetoLayer:
     knee: int | None = None
     size: float = 8.0
     faded: bool = False
+    alpha: int | None = None
+    legend: bool = True
+    clickable: bool = True
 
 
 class ParetoPlot(QWidget):
@@ -125,13 +131,18 @@ class ParetoPlot(QWidget):
             x = layer.values[:, layer.names.index(xn)]
             y = layer.values[:, layer.names.index(yn)]
             c = QColor(layer.color)
-            if layer.faded:
+            if layer.alpha is not None:
+                c.setAlpha(int(layer.alpha))
+            elif layer.faded:
                 c.setAlpha(90)
-            sp = pg.ScatterPlotItem(x, y, size=layer.size, brush=c, pen=pg.mkPen(th.plot_bg, width=0.5),
-                                    data=np.arange(len(x)), hoverable=True, name=layer.label,
+            pen = pg.mkPen(th.plot_bg, width=0.5) if layer.alpha is None else pg.mkPen(None)
+            sp = pg.ScatterPlotItem(x, y, size=layer.size, brush=c, pen=pen,
+                                    data=np.arange(len(x)), hoverable=True,
+                                    name=layer.label if layer.legend else None,
                                     tip=lambda x, y, data, _l=layer.label: f"{_l} #{data}\n{x:.4g}, {y:.4g}")
-            # sigClicked emits (item, points, mouse_event); keep the key out of the positional slots.
-            sp.sigClicked.connect(lambda _item, pts, *_ev, _k=layer.key: self._clicked(_k, pts))
+            if layer.clickable:
+                # sigClicked emits (item, points, mouse_event); keep the key out of the positional slots.
+                sp.sigClicked.connect(lambda _item, pts, *_ev, _k=layer.key: self._clicked(_k, pts))
             self.plot.addItem(sp)
             if layer.knee is not None and 0 <= layer.knee < len(x):
                 self.plot.addItem(pg.ScatterPlotItem([x[layer.knee]], [y[layer.knee]], size=layer.size + 9,

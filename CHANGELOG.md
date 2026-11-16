@@ -74,6 +74,12 @@ All notable changes are documented here. The format follows
   same choice is used for scoring and marked on the fronts. The chart is simulated as soon as runs are ticked (no
   scoring needed), over the whole record with the calibration and validation periods shaded, runs alternate solid
   and dashed lines, and runs on other datasets are named instead of silently left out.
+- Calibrate: a "Show" selector chooses what the convergence and front charts display - the run selected in the
+  table, any particular run, or every running run overlaid in its own colour - so simultaneous calibrations can
+  be followed side by side. "Earlier generations" draws the fronts of earlier reports behind the current one,
+  fainter the older they are, and a slider replays the run report by report (it follows a running calibration
+  until dragged back). The convergence chart can also show the front's size and its normalised hypervolume per
+  report (`core.diagnostics.front_history`, exact hypervolume up to four objectives).
 - `sparsehydro-viewer --self-test REPORT` checks an installation (every unit hydrograph, composed models and their
   traces, small calibrations in spawned worker processes, a project round trip, the main window) and writes a
   report; optional components such as the Platypus optimizers are reported as unavailable without failing. The

@@ -175,5 +175,64 @@ def slow_responses(built, record_hours: float, fraction: float = 0.5) -> list[Sl
     return out
 
 
-__all__ = ["ComplexityPoint", "SlowResponse", "complexity_front", "fit_statistics", "information_criteria",
-           "nondominated", "slow_responses"]
+def hypervolume(F: np.ndarray, ref: np.ndarray) -> float:
+    """Volume dominated by the points *F* (minimisation) and bounded by *ref*.
+
+    Exact, by slicing along the last objective (HSO); intended for calibration fronts (up to a few hundred points
+    and four objectives). Points not strictly better than *ref* in every objective contribute nothing.
+    """
+    F = np.atleast_2d(np.asarray(F, float))
+    ref = np.asarray(ref, float)
+    if F.size == 0:
+        return 0.0
+    F = F[np.all(np.isfinite(F), axis=1) & np.all(ref > F, axis=1)]
+    if len(F) == 0:
+        return 0.0
+    if F.shape[1] == 1:
+        return float(ref[0] - F[:, 0].min())
+    F = F[np.argsort(F[:, -1], kind="stable")]
+    total = 0.0
+    for i in range(len(F)):
+        top = F[i + 1, -1] if i + 1 < len(F) else ref[-1]
+        depth = top - F[i, -1]
+        if depth > 0:
+            total += depth * hypervolume(F[: i + 1, :-1], ref[:-1])
+    return float(total)
+
+
+@dataclass
+class FrontHistory:
+    """Per-report front statistics of a calibration run.
+
+    :ivar evaluations: Evaluations (or generation, when evaluations are not reported) at each report.
+    :ivar size: Number of points in the reported front.
+    :ivar hypervolume: Normalised hypervolume (objectives scaled to [0, 1] over the whole history, reference
+        point 1.1 in every objective; higher is better), or NaN with more than four objectives.
+    """
+
+    evaluations: np.ndarray
+    size: np.ndarray
+    hypervolume: np.ndarray
+
+
+def front_history(history: Sequence[tuple[int, int, np.ndarray]], max_objectives: int = 4) -> FrontHistory:
+    """Front size and normalised hypervolume of every report in a run's history (fronts in minimisation form)."""
+    fronts = [np.atleast_2d(np.asarray(F, float)) for _, _, F in history]
+    x = np.array([float(n or g) for g, n, _ in history])
+    size = np.array([len(F) if F.size else 0 for F in fronts], dtype=int)
+    hv = np.full(len(fronts), np.nan)
+    stacked = [F for F in fronts if F.size]
+    if stacked and stacked[0].shape[1] <= max_objectives:
+        everything = np.vstack(stacked)
+        ok = np.all(np.isfinite(everything), axis=1)
+        if ok.any():
+            lo, hi = everything[ok].min(axis=0), everything[ok].max(axis=0)
+            span = np.where(hi > lo, hi - lo, 1.0)
+            ref = np.full(len(lo), 1.1)
+            for i, F in enumerate(fronts):
+                hv[i] = hypervolume((F - lo) / span, ref) if F.size else np.nan
+    return FrontHistory(x, size, hv)
+
+
+__all__ = ["ComplexityPoint", "FrontHistory", "SlowResponse", "complexity_front", "fit_statistics", "front_history",
+           "hypervolume", "information_criteria", "nondominated", "slow_responses"]

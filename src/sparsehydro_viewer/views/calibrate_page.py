@@ -7,6 +7,7 @@ import pyqtgraph as pg
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QGroupBox,
     QHBoxLayout,
@@ -18,6 +19,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QProgressBar,
     QPushButton,
+    QSlider,
     QSplitter,
     QTableWidget,
     QVBoxLayout,
@@ -27,6 +29,7 @@ from PySide6.QtWidgets import (
 from .. import theme
 from ..core.calibration import CalibrationPayload
 from ..core.catalog import CATALOG, parameter_counts
+from ..core.diagnostics import front_history
 from ..core.objectives import OBJECTIVES, ObjectiveSpec
 from ..core.runs import RunRecord, new_id
 from ..core.solvers import SOLVERS, SolverSpec
@@ -137,21 +140,55 @@ class CalibratePage(Page):
         self.conv.showGrid(x=True, y=True, alpha=0.15)
         theme.plain_axes(self.conv)
         self.conv_obj = QComboBox()
+        self.conv_obj.setToolTip("Best value of an objective at each report, or the front's size or hypervolume "
+                                 "(objectives scaled over the run's history; higher means a better, wider front)")
+        self.conv_obj.setAccessibleName("Convergence measure")
         self.conv_obj.currentIndexChanged.connect(self._draw_monitor)
-        conv_box = QGroupBox("Convergence (best value per report)")
+        self.conv_legend = self.conv.addLegend(offset=(-10, 10), labelTextColor=theme.current().plot_fg)
+        conv_box = QGroupBox("Convergence")
         cl = QVBoxLayout(conv_box)
         cl.addWidget(self.conv_obj)
         cl.addWidget(self.conv, 1)
         self.front = ParetoPlot(labels=objective_labels(), better=objective_better())
-        front_box = QGroupBox("Current front")
-        fl = QVBoxLayout(front_box)
+        self.front_box = QGroupBox("Current front")
+        fl = QVBoxLayout(self.front_box)
         fl.addWidget(self.front)
         mon = QSplitter()
         mon.addWidget(conv_box)
-        mon.addWidget(front_box)
+        mon.addWidget(self.front_box)
+
+        # -- which run(s) the monitor shows, and the front's history ----------------
+        self.monitor_box = QComboBox()
+        self.monitor_box.setToolTip("Run shown in the convergence and front charts: the run selected in the table, "
+                                    "a particular run, or every running run overlaid (one colour each)")
+        self.monitor_box.setAccessibleName("Run shown in the monitor")
+        self.monitor_box.currentIndexChanged.connect(self._draw_monitor)
+        self.history = QCheckBox("Earlier generations")
+        self.history.setToolTip("Draw the fronts of earlier reports behind the current one, fainter the older they "
+                                "are (one run at a time)")
+        self.history.toggled.connect(self._draw_monitor)
+        self.generation = QSlider(Qt.Orientation.Horizontal)
+        self.generation.setMinimum(1)
+        self.generation.setToolTip("Report shown as the current front; drag back to replay the run's progress")
+        self.generation.setAccessibleName("Report shown as the current front")
+        self.generation.valueChanged.connect(self._draw_monitor)
+        self.generation_label = QLabel()
+        self.generation_label.setObjectName("hint")
+        bar = QHBoxLayout()
+        bar.addWidget(QLabel("Show"))
+        bar.addWidget(self.monitor_box, 2)
+        bar.addSpacing(12)
+        bar.addWidget(self.history)
+        bar.addWidget(self.generation, 2)
+        bar.addWidget(self.generation_label, 1)
+        monitor = QWidget()
+        ml = QVBoxLayout(monitor)
+        ml.setContentsMargins(0, 0, 0, 0)
+        ml.addLayout(bar)
+        ml.addWidget(mon, 1)
         right = QSplitter(Qt.Orientation.Vertical)
         right.addWidget(runs_box)
-        right.addWidget(mon)
+        right.addWidget(monitor)
         right.setStretchFactor(0, 2)
         right.setStretchFactor(1, 3)
 
@@ -166,6 +203,9 @@ class CalibratePage(Page):
 
         self._monitor_id: str | None = None
         s.projectChanged.connect(self._load_from_session)
+        s.runsChanged.connect(self._fill_monitor_box)
+        for sig in (ctx.calibration.started, ctx.calibration.finished):
+            sig.connect(lambda *_: self._fill_monitor_box())
         s.objectivesChanged.connect(self._sync_objectives)
         s.runsChanged.connect(self._fill_table)
         s.modelChanged.connect(self._update_hint)
@@ -193,6 +233,7 @@ class CalibratePage(Page):
         self.solver_desc.setText(entry.description)
         self.solver_form.set_specs(entry.options, spec.options)
         self._fill_table()
+        self._fill_monitor_box()
         self._update_hint()
 
     def _sync_objectives(self) -> None:
@@ -434,8 +475,9 @@ class CalibratePage(Page):
 
     def _on_progress(self, run_id: str) -> None:
         self._on_run_changed(run_id)
-        if self._monitor_id in (None, run_id):
+        if self._monitor_id is None:
             self._monitor_id = run_id
+        if run_id in {r.id for r in self._monitored()} or self.monitor_box.currentData() == self.ACTIVE:
             self._draw_monitor()
 
     def _on_finished(self, run_id: str) -> None:
@@ -445,10 +487,44 @@ class CalibratePage(Page):
             if run.status == "failed":
                 QMessageBox.warning(self, "Calibration failed", f"{run.label}: {run.message}")
         self._on_run_changed(run_id)
-        if self._monitor_id == run_id:
+        if run_id in {r.id for r in self._monitored()} or self.monitor_box.currentData() == self.ACTIVE:
             self._draw_monitor()
 
     # ------------------------------------------------------------------ monitor
+
+    #: Monitor modes besides a particular run id.
+    SELECTED, ACTIVE = "__selected__", "__active__"
+    #: Convergence measures besides an objective name.
+    SIZE, HV = "__front_size__", "__hypervolume__"
+    #: Earlier generations drawn at most (evenly thinned beyond), to keep the front chart responsive.
+    MAX_HISTORY_LAYERS = 40
+
+    def _fill_monitor_box(self) -> None:
+        current = self.monitor_box.currentData()
+        self.monitor_box.blockSignals(True)
+        self.monitor_box.clear()
+        self.monitor_box.addItem("Selected run", self.SELECTED)
+        self.monitor_box.addItem("All running runs (overlaid)", self.ACTIVE)
+        for run in reversed(self.ctx.session.project.runs):
+            self.monitor_box.addItem(f"{run.label}  [{run.status}]", run.id)
+        i = self.monitor_box.findData(current)
+        self.monitor_box.setCurrentIndex(i if i >= 0 else 0)
+        self.monitor_box.blockSignals(False)
+
+    def _monitored(self) -> list[RunRecord]:
+        """Runs the monitor shows, in a stable order."""
+        s = self.ctx.session
+        mode = self.monitor_box.currentData() or self.SELECTED
+        if mode == self.ACTIVE:
+            runs = [r for r in s.project.runs if self.ctx.calibration.is_active(r.id) and r.history]
+            if runs:
+                return runs
+            mode = self.SELECTED
+        if mode == self.SELECTED:
+            run = s.run(self._monitor_id)
+            return [run] if run is not None else []
+        run = s.run(mode)
+        return [run] if run is not None else []
 
     def _monitor_selected(self) -> None:
         ids = self._selected_ids()
@@ -456,35 +532,129 @@ class CalibratePage(Page):
             self._monitor_id = ids[0]
             self._draw_monitor()
 
-    def _draw_monitor(self) -> None:
-        run = self.ctx.session.run(self._monitor_id)
-        self.conv.clear()
-        if run is None or not run.objective_names:
-            self.front.set_layers([])
+    def _sync_conv_measures(self, names: list[str]) -> None:
+        labels = objective_labels(names)
+        wanted = [*names, self.SIZE, self.HV]
+        if [self.conv_obj.itemData(i) for i in range(self.conv_obj.count())] == wanted:
             return
-        labels = objective_labels(run.objective_names)
-        if [self.conv_obj.itemData(i) for i in range(self.conv_obj.count())] != run.objective_names:
-            self.conv_obj.blockSignals(True)
-            self.conv_obj.clear()
-            for n in run.objective_names:
-                self.conv_obj.addItem(labels.get(n, n), n)
-            self.conv_obj.blockSignals(False)
-        j = max(0, self.conv_obj.currentIndex())
+        current = self.conv_obj.currentData()
+        self.conv_obj.blockSignals(True)
+        self.conv_obj.clear()
+        for n in names:
+            self.conv_obj.addItem(f"Best {labels.get(n, n)}", n)
+        self.conv_obj.addItem("Front size (solutions)", self.SIZE)
+        self.conv_obj.addItem("Hypervolume (normalised)", self.HV)
+        i = self.conv_obj.findData(current)
+        self.conv_obj.setCurrentIndex(i if i >= 0 else 0)
+        self.conv_obj.blockSignals(False)
+
+    def _draw_monitor(self) -> None:
+        runs = self._monitored()
+        self.conv.clear()
+        self.conv_legend.clear()
+        if not runs or not runs[0].objective_names:
+            self.front.set_layers([])
+            self.generation_label.setText("")
+            return
+        names = runs[0].objective_names
+        self._sync_conv_measures(names)
+        measure = self.conv_obj.currentData() or names[0]
+        single = len(runs) == 1
+        labels = objective_labels(names)
+        self.conv.setLabel("left", {self.SIZE: "Solutions in the front", self.HV: "Hypervolume (normalised)"}
+                           .get(measure, labels.get(measure, measure)))
+        for i, run in enumerate(runs):
+            if not run.history:
+                continue
+            color = theme.current().accent if single else theme.series_color(i)
+            if measure in (self.SIZE, self.HV):
+                h = self._front_history(run)
+                x, y = h.evaluations, (h.size if measure == self.SIZE else h.hypervolume)
+            elif measure in run.objective_names:
+                j = run.objective_names.index(measure)
+                flags = np.asarray(run.minimize_flags, dtype=bool)
+                x = [h[1] or h[0] for h in run.history]
+                y = []
+                for _, _, F in run.history:
+                    F = np.atleast_2d(F)
+                    col = F[:, j] if F.size else np.array([np.nan])
+                    if not np.isfinite(col).any():  # a report with no defined value: leave a gap
+                        y.append(np.nan)
+                        continue
+                    m = float(np.nanmin(col))
+                    y.append(m if flags[j] else -m)
+            else:
+                continue
+            self.conv.plot(x, y, pen=pg.mkPen(color, width=2), symbol="o", symbolSize=4, connect="finite",
+                           name=None if single else run.label)
+        self._draw_fronts(runs, single)
+
+    def _draw_fronts(self, runs: list[RunRecord], single: bool) -> None:
+        if not single:
+            self.history.setEnabled(False)
+            self.generation.setEnabled(False)
+            self.generation_label.setText(f"{len(runs)} runs")
+            self.front_box.setTitle("Current fronts")
+            self.front.set_layers([self._current_layer(r, theme.series_color(i)) for i, r in enumerate(runs)])
+            return
+        run = runs[0]
+        n = len(run.history)
+        self.history.setEnabled(n > 1)
+        self.generation.setEnabled(n > 1)
+        last_id, last_n = getattr(self, "_slider_state", (None, 0))
+        # Follow a running calibration (and start a newly shown run at its end) unless the user dragged back.
+        at_end = last_id != run.id or self.generation.value() >= last_n
+        self.generation.blockSignals(True)
+        self.generation.setMaximum(max(n, 1))
+        if at_end or self.generation.value() > n:
+            self.generation.setValue(max(n, 1))
+        self.generation.blockSignals(False)
+        self._slider_state = (run.id, n)
+        k = self.generation.value()
+        replaying = 0 < k < n
+        if not n:
+            self.generation_label.setText("")
+        else:
+            gen, evals, _ = run.history[k - 1]
+            self.generation_label.setText(f"report {k}/{n}: generation {gen}" + (f", {evals} evaluations" if evals
+                                                                              else ""))
         flags = np.asarray(run.minimize_flags, dtype=bool)
-        if run.history:
-            x = [h[1] or h[0] for h in run.history]
-            best = []
-            for _, _, F in run.history:
-                F = np.atleast_2d(F)
-                col = F[:, j] if F.size else np.array([np.nan])
-                if not np.isfinite(col).any():  # a report with no defined value: leave a gap
-                    best.append(np.nan)
+        layers: list[ParetoLayer] = []
+        if self.history.isChecked() and k > 1:
+            earlier = list(range(k - 1))
+            if len(earlier) > self.MAX_HISTORY_LAYERS:
+                earlier = sorted(set(np.linspace(0, k - 2, self.MAX_HISTORY_LAYERS).round().astype(int)))
+            muted = theme.current().muted
+            for m, g in enumerate(earlier):
+                F = np.atleast_2d(run.history[g][2])
+                if not F.size:
                     continue
-                m = float(np.nanmin(col))
-                best.append(m if flags[j] else -m)
-            self.conv.plot(x, best, pen=pg.mkPen(theme.current().accent, width=2), symbol="o", symbolSize=4,
-                           connect="finite")
-            self.conv.setLabel("left", labels.get(run.objective_names[j], ""))
+                age = (g + 1) / k  # 0 (oldest) .. 1 (newest)
+                layers.append(ParetoLayer(f"{run.id}:h{g}", "earlier generations", np.where(flags, F, -F),
+                                          run.objective_names, muted, size=6, alpha=int(20 + 120 * age),
+                                          legend=m == len(earlier) - 1, clickable=False))
+        if replaying:
+            F = np.atleast_2d(run.history[k - 1][2])
+            layers.append(ParetoLayer(run.id, f"report {k}", np.where(flags, F, -F), run.objective_names,
+                                      theme.series_color(0)))
+            self.front_box.setTitle(f"Front at report {k} of {n}")
+        else:
+            layers.append(self._current_layer(run, theme.series_color(0)))
+            self.front_box.setTitle("Final front" if run.has_results else "Current front")
+        self.front.set_layers(layers)
+
+    def _front_history(self, run: RunRecord):
+        """Front statistics, recomputed only when the run has reported again."""
+        cache = self.__dict__.setdefault("_fh_cache", {})
+        key = (run.id, len(run.history))
+        if key not in cache:
+            cache.clear() if len(cache) > 32 else None
+            cache[key] = front_history(run.history)
+        return cache[key]
+
+    @staticmethod
+    def _current_layer(run: RunRecord, color: str) -> ParetoLayer:
+        flags = np.asarray(run.minimize_flags, dtype=bool)
         if run.has_results:
             values, knee = run.display_F(), run.knee_index()
         elif run.history:
@@ -492,5 +662,4 @@ class CalibratePage(Page):
             values, knee = np.where(flags, F, -F), None
         else:
             values, knee = np.empty((0, len(flags))), None
-        self.front.set_layers([ParetoLayer(run.id, run.label, values, run.objective_names,
-                                           theme.series_color(0), knee=knee)])
+        return ParetoLayer(run.id, run.label, values, run.objective_names, color, knee=knee)
