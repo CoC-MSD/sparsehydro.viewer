@@ -9,8 +9,7 @@ from PySide6.QtCore import QCoreApplication, QSettings
 from PySide6.QtWidgets import QApplication
 
 from . import APP_NAME, ORG_NAME, __version__, theme
-
-APP_USER_MODEL_ID = "sparsehydro.viewer"
+from .platform import APP_USER_MODEL_ID  # noqa: E402
 
 
 def _windows_taskbar_identity() -> None:
@@ -66,6 +65,9 @@ def run(project: str | None = None) -> int:
 
     win = MainWindow()
     win.show()
+    from .platform import apply_taskbar_identity
+
+    apply_taskbar_identity(win)  # taskbar icon and relaunch command when started from Python
     if project:
         win.open_project(project, confirm=False)
     return app.exec()

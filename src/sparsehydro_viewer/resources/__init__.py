@@ -33,6 +33,46 @@ def app_icon() -> QIcon:
     return ic
 
 
+def _png_bytes(size: int) -> bytes:
+    from PySide6.QtCore import QBuffer, QIODevice
+    from PySide6.QtGui import QImage
+
+    image = QImage(size, size, QImage.Format.Format_ARGB32)
+    image.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(image)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    QSvgRenderer(str(APP_ICON_SVG)).render(painter, QRectF(0, 0, size, size))
+    painter.end()
+    data = QByteArray()
+    buf = QBuffer(data)
+    buf.open(QIODevice.OpenModeFlag.WriteOnly)
+    image.save(buf, "PNG")
+    return bytes(data.data())
+
+
+def write_app_ico(out: Path, sizes=APP_ICON_SIZES) -> Path:
+    """Write the application icon as a Windows ``.ico`` (PNG entries, one per size); needs a Qt application.
+
+    Used for the executable and installer (``packaging/make_icon.py``) and, at run time, for the taskbar
+    button's relaunch icon (see :mod:`sparsehydro_viewer.platform`).
+    """
+    import struct
+
+    images = [(s, _png_bytes(s)) for s in sizes]
+    header = struct.pack("<HHH", 0, 1, len(images))
+    offset = 6 + 16 * len(images)
+    entries, blobs = b"", b""
+    for size, png in images:
+        dim = 0 if size >= 256 else size  # 0 means 256 in the ICO directory
+        entries += struct.pack("<BBBBHHII", dim, dim, 0, 0, 1, 32, len(png), offset)
+        blobs += png
+        offset += len(png)
+    out = Path(out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_bytes(header + entries + blobs)
+    return out
+
+
 def icon_names() -> list[str]:
     return sorted(p.stem for p in ICON_DIR.glob("*.svg"))
 
@@ -67,4 +107,4 @@ def _render(name: str, color: str, size: int) -> QPixmap:
     return pm
 
 
-__all__ = ["APP_ICON_SIZES", "APP_ICON_SVG", "ICON_DIR", "app_icon", "icon", "icon_names"]
+__all__ = ["APP_ICON_SIZES", "APP_ICON_SVG", "ICON_DIR", "app_icon", "icon", "icon_names", "write_app_ico"]
