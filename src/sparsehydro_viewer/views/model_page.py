@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 from .. import theme
 from ..core.catalog import CATALOG, ModelSpec, parameter_counts
 from ..core.data import epoch_seconds
-from ..core.trace import flow_parts
+from ..core.trace import flow_parts, input_fields
 from ..resources import icon
 from ..services import LiveResult
 from ..widgets import TimeseriesPlot, UHPreview
@@ -119,11 +119,12 @@ class ModelPage(Page):
             "Export trace…", "Save the whole record's simulation with every component, state and flux to CSV",
             "export", self.export_trace)
         self.states = StatesPanel()
-        self.states.link_x(self.plot.flow_plot.getViewBox())
+        self.states.selectionChanged.connect(lambda *_: self._panels_changed())
         self.lower_tabs = QTabWidget()
         self.lower_tabs.addTab(self.uh, "Unit hydrographs (unit area)")
-        self.lower_tabs.addTab(self.states, icon("states"), "Internal states")
-        self.lower_tabs.currentChanged.connect(lambda *_: self._trace_needs_changed())
+        self.lower_tabs.addTab(self.states, icon("states"), "States && inputs")
+        self.lower_tabs.setTabToolTip(1, "Pick internal states, fluxes and dataset inputs (e.g. temperature) to plot "
+                                         "in panels under the hydrograph, on the same time axis")
         uh_box = QGroupBox()
         ul = QVBoxLayout(uh_box)
         ul.setContentsMargins(4, 4, 4, 4)
@@ -201,8 +202,7 @@ class ModelPage(Page):
 
     def wants_trace(self) -> bool:
         """The trace costs a second model run, so it is computed only while it is on screen."""
-        return self.isVisible() and (self.components_action.isChecked()
-                                     or self.lower_tabs.currentWidget() is self.states)
+        return self.isVisible() and (self.components_action.isChecked() or self.states.needs_trace())
 
     def _trace_needs_changed(self) -> None:
         self.ctx.controller.live.set_trace(self.wants_trace())
@@ -239,14 +239,35 @@ class ModelPage(Page):
 
     # ------------------------------------------------------------------ live results
 
+    def _panels_changed(self) -> None:
+        """Ticks changed: compute the trace if a model series is ticked, and redraw the panels."""
+        self._trace_needs_changed()
+        if getattr(self, "_last_result", None) is not None:
+            self._draw_panels(self._last_result)
+
+    def _draw_panels(self, res: LiveResult) -> None:
+        """Ticked series in panels under the flow, one per unit (dataset inputs first)."""
+        arrays = {f"inputs.{k}": v for k, v in (res.inputs or {}).items()}
+        arrays.update(res.trace or {})
+        groups: dict[str, list] = {}
+        colors = {name: theme.series_color(i) for i, name in enumerate(self.states.fields)}
+        for name in self.states.selected():
+            f = self.states.fields.get(name)
+            if f is None or name not in arrays:
+                continue  # a model series before the first trace arrives
+            groups.setdefault(f.units or "-", []).append(
+                (f.label, arrays[name], colors.get(name, theme.current().accent), f.role == "flux"))
+        self.plot.set_panels([(f"units:{u}", u, series) for u, series in groups.items()], self._t)
+
     def _show_trace(self, res: LiveResult) -> None:
-        """Stack the individual hydrographs under the simulation and feed the states panel."""
+        """Feed the series picker, draw its panels, and stack the individual hydrographs under the simulation."""
+        self.states.set_fields(res.trace_fields or [], self.ctx.session.model_spec.structure_key,
+                               input_fields(res.inputs or {}))
+        self._draw_panels(res)
         if res.trace is None or res.trace_fields is None:
             return
         arrays = dict(res.trace)
         arrays.setdefault(res.output_key, res.calibration.predicted)
-        self.states.set_fields(res.trace_fields, self.ctx.session.model_spec.structure_key)
-        self.states.set_trace(self._t, arrays)
         if self.components_action.isChecked():
             fields = {f.name: f for f in res.trace_fields}
             parts = flow_parts(res.trace_fields, arrays, res.output_key)

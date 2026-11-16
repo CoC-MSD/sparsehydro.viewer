@@ -92,6 +92,9 @@ class Evaluator:
         self.datetime = frame["datetime"].to_numpy()
         self.rain = frame["rain"].to_numpy(dtype=float)
         self.observed = frame["stormflow"].to_numpy(dtype=float)
+        #: Other forcing columns of the dataset (e.g. ``temperature_c``), for plotting next to the flow.
+        self.inputs = {c: frame[c].to_numpy(dtype=float) for c in frame.columns
+                       if c not in ("datetime", "rain", "stormflow") and pd.api.types.is_numeric_dtype(frame[c])}
         self.dt_hours = dt_hours(frame)
         self.built = CATALOG.build(spec, strict=False)
         self.model = self.built.model

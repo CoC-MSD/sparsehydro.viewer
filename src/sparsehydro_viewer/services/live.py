@@ -43,6 +43,8 @@ class LiveResult:
     output_key: str = ""
     #: Unit hydrographs whose bounds allow responses too slow for the calibration period.
     slow_responses: tuple = ()
+    #: Other forcing series of the dataset over the calibration period (e.g. temperature).
+    inputs: dict | None = None
 
 
 @dataclass
@@ -108,15 +110,18 @@ class _Worker(QObject):
                 cal = self._cal.evaluate(values)
                 val = self._val.evaluate(values) if self._val is not None else None
                 curves = kernel_curves(self._cal.built, self._cal.dt_hours)
-                trace = fields = None
+                if config is not None or getattr(self, "_fields", None) is None:
+                    self._fields = self._cal.trace_fields()  # metadata only: cheap, listed before any trace runs
+                trace, fields = None, list(self._fields)
                 if self.want_trace:
                     try:
-                        trace, fields = self._cal.trace(), self._cal.trace_fields()
+                        trace = self._cal.trace()
                     except Exception as exc:  # a model without a working trace still evaluates
                         log.warning("trace unavailable: %s", exc)
                 self.ready.emit(LiveResult(cal, val, self._cal.datetime, self._cal.observed, self._cal.rain,
                                            curves, self._cal.dt_hours, generation, trace, fields,
-                                           self._cal.predicted_key, tuple(self._cal.slow_responses)))
+                                           self._cal.predicted_key, tuple(self._cal.slow_responses),
+                                           dict(self._cal.inputs)))
             except Exception as exc:
                 log.exception("live evaluation failed")
                 self.failed.emit(f"{type(exc).__name__}: {exc}")

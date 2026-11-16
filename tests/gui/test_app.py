@@ -41,7 +41,8 @@ def test_components_and_states_on_the_model_page(window, qtbot, sample_frame, sa
 
     s = window.ctx.session
     live = window.ctx.controller.live
-    _load(window, qtbot, sample_frame, sample_csv)
+    frame = sample_frame.assign(temperature_c=np.linspace(5.0, 20.0, len(sample_frame)))  # a model input
+    _load(window, qtbot, frame, sample_csv)
     window.nav.setCurrentRow(1)
     page = window.pages[1]
     assert not live.trace_enabled  # nothing on screen needs it: sliders stay as fast as before
@@ -54,21 +55,41 @@ def test_components_and_states_on_the_model_page(window, qtbot, sample_frame, sa
     assert live.trace_enabled and sig.args[0].trace is not None
     labels = page.plot.stack_labels("components")
     assert len(labels) == 3 and any("UH 1" in x for x in labels) and any("san" in x for x in labels)
+    page.components_action.trigger()
+    assert not live.trace_enabled and page.plot.stack_labels("components") == []
 
-    # Internal states tab: the losses' state is listed and plotted by default
-    page.lower_tabs.setCurrentWidget(page.states)
-    assert "wet.ia.ia_available" in page.states.fields
-    assert page.states.plotted() == ["wet.ia.ia_available"]
+    # The picker lists the dataset's inputs and the model's states, before any trace runs; nothing is ticked
+    assert {"inputs.temperature_c", "wet.ia.ia_available"} <= set(page.states.fields)
+    assert page.states.selected() == [] and page.plot.panel_keys() == []
+    # An input needs no model trace; it appears in a panel under the flow
+    page.states.set_selected(["inputs.temperature_c"])
+    assert not live.trace_enabled and page.plot.panel_keys() == ["units:°C"]
+    # A model state turns the trace on; it gets its own panel (one per unit)
+    with qtbot.waitSignal(window.ctx.controller.result, timeout=15000):
+        page.states.set_selected(["inputs.temperature_c", "wet.ia.ia_available"])
+    assert live.trace_enabled and page.plot.panel_keys() == ["units:°C", "units:in"]
+    assert page.plot.panel_series("units:in") == ["wet › ia › remaining abstraction"]
+    # The panels share the flow's time axis and axis width: zooming the flow zooms them
+    flow = page.plot.flow_plot
+    panels = [p for p, _ in page.plot._panels.values()]
+    assert all(p.getViewBox().linkedView(0) is flow.getViewBox() for p in panels)
+    assert {p.getAxis("left").width() for p in panels} == {flow.getAxis("left").width()}
+    t0 = page.plot.data_range()[0]
+    page.plot.zoom_to(t0 + 86400, t0 + 2 * 86400)
+    for p in panels:
+        x0, x1 = p.viewRange()[0]
+        assert x0 == pytest.approx(flow.viewRange()[0][0]) and x1 == pytest.approx(flow.viewRange()[0][1])
+    assert not flow.getAxis("bottom").isVisible() and panels[-1].getAxis("bottom").isVisible()
     with qtbot.waitSignal(window.ctx.controller.result, timeout=5000):
         window.params.rows["wet_ia_max"].slider.setValue(800)
-    assert page.states.plotted() == ["wet.ia.ia_available"]
+    assert page.plot.panel_keys() == ["units:°C", "units:in"]
 
-    # Turning both off stops computing the trace and removes the layer
-    page.components_action.trigger()
-    page.lower_tabs.setCurrentWidget(page.uh)
-    assert not live.trace_enabled and page.plot.stack_labels("components") == []
+    # Unticking removes the panels and stops computing the trace; a hidden page needs nothing
+    page.states.set_selected([])
+    assert not live.trace_enabled and page.plot.panel_keys() == []
+    assert flow.getAxis("bottom").isVisible()
+    page.states.set_selected(["wet.ia.ia_available"])
     window.nav.setCurrentRow(0)
-    page.lower_tabs.setCurrentWidget(page.states)
     assert not live.trace_enabled  # the page is hidden
 
 

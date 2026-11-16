@@ -41,10 +41,12 @@ All notable changes are documented here. The format follows
 - The analysis dataset is shown on the toolbar of every page and can be switched there.
 - Hydrograph components and internal states (Model page), from sparsehydro's model traces:
   "Components" stacks the simulated hydrograph as its individual hydrographs (each unit hydrograph, the
-  sanitary term, each part of a peak-tail or mixture UH; sum weights applied), and the "Internal states" tab
-  lists the model's states and fluxes by component (remaining initial abstraction, tank storage, soil and
-  groundwater stores, snowpack, melt...) and plots the ticked ones on the hydrograph's time axis, one panel
-  per unit. Both follow the sliders; the trace is computed only while one of them is on screen.
+  sanitary term, each part of a peak-tail or mixture UH; sum weights applied), and the "States & inputs" tab
+  lists the dataset's other inputs (e.g. temperature) and the model's states and fluxes by component
+  (remaining initial abstraction, tank storage, soil and groundwater stores, snowpack, melt...). Ticked series
+  are drawn in panels at the bottom of the hydrograph chart, one per unit, with the same width and time axis as
+  the rain and flow panels, so they pan, zoom and select together. Both follow the sliders; the model trace is
+  computed only while components or a model state is shown.
   Explore has the same "Components" layer for the selected solution, and "Export trace…" (Model page)
   saves the whole record's simulation with every component, state and flux to CSV, with a `.fields.csv`
   describing each column.

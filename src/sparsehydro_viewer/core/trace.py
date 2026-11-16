@@ -60,6 +60,8 @@ _LEAF_LABELS = {
 
 
 def leaf_label(leaf: str, description: str = "") -> str:
+    if leaf in _INPUTS:
+        return _INPUTS[leaf][1]
     m = re.fullmatch(r"rdii_component_(\d+)", leaf)
     if m:
         kind = re.search(r"\(([^)]+)\)\s*$", description)
@@ -121,6 +123,25 @@ def flow_parts(fields: list[TraceField], arrays: dict[str, np.ndarray], output: 
             return []
         output = alias
     return expand(output, 1.0, 0) if output in by_owner else []
+
+
+#: Units and labels of known dataset input columns (others are shown by name, without units).
+_INPUTS = {"temperature_c": ("°C", "air temperature"), "temperature_f": ("°F", "air temperature"),
+           "snow_depth_in": ("in", "snow depth"), "rainfall_in": ("in", "rainfall"),
+           "groundwater_ft": ("ft", "groundwater level")}
+
+
+def input_fields(columns) -> list[TraceField]:
+    """Dataset forcing columns (e.g. temperature) as plottable fields, named ``inputs.<column>``."""
+    out = []
+    for c in columns:
+        units, label = _INPUTS.get(c, ("", c.replace("_", " ")))
+        out.append(TraceField(f"inputs.{c}", "input", units=units, description=f"Dataset column {c!r}: {label}"))
+    return out
+
+
+def input_label(column: str) -> str:
+    return _INPUTS.get(column, ("", column.replace("_", " ")))[1]
 
 
 _FLOW_LEAF = re.compile(r"(_cfs|_flow|^Q_pred|^rdii_(in|mm))$")

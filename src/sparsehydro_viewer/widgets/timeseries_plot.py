@@ -67,6 +67,8 @@ class TimeseriesPlot(pg.GraphicsLayoutWidget):
         self.setBackground(t.plot_bg)
         self.ci.setSpacing(0)
         self.rain_plot: pg.PlotItem | None = None
+        #: Extra panels below the flow panel: key -> (plot, {series label: curve}).
+        self._panels: dict[str, tuple[pg.PlotItem, dict[str, pg.PlotDataItem]]] = {}
         self._mode = "pan"
         self._preview: list[pg.LinearRegionItem] = []
         self._periods: dict[str, pg.LinearRegionItem] = {}
@@ -99,10 +101,13 @@ class TimeseriesPlot(pg.GraphicsLayoutWidget):
         self._bands: dict[str, pg.FillBetweenItem] = {}
         self._stacks: dict[str, list] = {}
         self._spans: list[pg.LinearRegionItem] = []
+        self._span_specs: list = []
+        self._span_color: str | None = None
         self._region: pg.LinearRegionItem | None = None
         self._rain_item: pg.PlotDataItem | None = None
         self._obs_item: pg.PlotDataItem | None = None
         self._t: np.ndarray | None = None
+        self.ci.layout.setRowStretchFactor(1, 3)
         self.scene().sigMouseMoved.connect(self._mouse_moved)
 
     def _mouse_moved(self, pos) -> None:
@@ -113,7 +118,66 @@ class TimeseriesPlot(pg.GraphicsLayoutWidget):
             self.cursorMoved.emit(float("nan"), float("nan"))
 
     def _plots(self) -> list[pg.PlotItem]:
-        return [p for p in (self.rain_plot, self.flow_plot) if p is not None]
+        return [p for p in (self.rain_plot, self.flow_plot) if p is not None] + \
+            [plot for plot, _ in self._panels.values()]
+
+    # ------------------------------------------------------------------ extra panels
+
+    def set_panels(self, panels: list[tuple[str, str, list[tuple[str, np.ndarray, str, bool]]]],
+                   t: np.ndarray | None = None) -> None:
+        """Show extra panels below the flow panel, sharing its time axis (pan, zoom and selection move together).
+
+        :param panels: ``(key, axis label, [(series label, values, colour, dashed)])`` per panel, top to
+            bottom; an empty list removes them. Panels and curves whose keys and labels are unchanged are
+            updated in place, so live updates stay cheap.
+        """
+        t = self._t if t is None else np.asarray(t, float)
+        structure = [(key, label, tuple(s[0] for s in series)) for key, label, series in panels]
+        if structure != getattr(self, "_panel_structure", None):
+            self._rebuild_panels(structure)
+        for key, _label, series in panels:
+            _plot, curves = self._panels[key]
+            for name, y, color, dashed in series:
+                curve = curves[name]
+                curve.setData(t, np.asarray(y, float))
+                curve.setPen(_pen(color, 1.4, Qt.PenStyle.DashLine if dashed else Qt.PenStyle.SolidLine))
+
+    def _rebuild_panels(self, structure) -> None:
+        for plot, _ in self._panels.values():
+            self.ci.removeItem(plot)
+        self._panels = {}
+        th = theme.current()
+        for row, (key, label, names) in enumerate(structure, start=2):
+            plot = self.addPlot(row=row, col=0, viewBox=_TimeViewBox(),
+                                axisItems={"bottom": pg.DateAxisItem(utcOffset=0)})
+            theme.plain_axes(plot)
+            plot.setLabel("left", label)
+            plot.getAxis("left").setWidth(60)  # same as the panels above, so the time axes line up
+            plot.showGrid(x=True, y=True, alpha=0.15)
+            plot.setMouseEnabled(x=True, y=False)
+            plot.setClipToView(True)
+            plot.setDownsampling(auto=True, mode="peak")
+            plot.setXLink(self.flow_plot)
+            plot.setMinimumHeight(90)
+            self.ci.layout.setRowStretchFactor(row, 1)
+            plot.addLegend(offset=(-10, 4), labelTextColor=th.plot_fg)
+            self._panels[key] = (plot, {name: plot.plot([], [], name=name) for name in names})
+        # Only the bottom panel shows dates.
+        plots = [self.flow_plot] + [p for p, _ in self._panels.values()]
+        for p in plots[:-1]:
+            p.hideAxis("bottom")
+        plots[-1].showAxis("bottom")
+        self._panel_structure = structure
+        self.set_mode(self._mode)
+        if self._span_specs:
+            self.set_spans(self._span_specs, self._span_color)
+        self._fit_y()
+
+    def panel_keys(self) -> list[str]:
+        return list(self._panels)
+
+    def panel_series(self, key: str) -> list[str]:
+        return list(self._panels[key][1]) if key in self._panels else []
 
     # ------------------------------------------------------------------ data
 
@@ -237,6 +301,7 @@ class TimeseriesPlot(pg.GraphicsLayoutWidget):
                 if s in p.items:
                     p.removeItem(s)
         self._spans = []
+        self._span_specs, self._span_color = list(spans), color
         default = color or theme.current().event_fill
         for span in spans:
             t0, t1 = span[0], span[1]
