@@ -30,7 +30,8 @@ All notable changes are documented here. The format follows
   because the tile server sees the area viewed. The import dialog adds data to a new or existing site,
   optionally with its location.
 - Application icon (window, taskbar, Windows executable and installer); the installer can associate
-  `.shproj` project files with the viewer.
+  `.shproj` project files with the viewer. Started from Python, the main window sets its own taskbar relaunch
+  properties (icon, command, name) so the taskbar button shows the application icon without a shortcut.
 - Runs on the refactored sparsehydro (hours-based unit hydrographs, `metrics`, registries). Unit
   hydrographs, losses and objectives are discovered from sparsehydro's registries, so every registered
   formulation is offered (Clark, ModClark, SCS, Snyder, Weibull, lognormal, generalised gamma, mixture, ...)
