@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <!-- SparseHydro Viewer: rainfall (hyetograph bars) over the runoff it produces (a unit hydrograph). -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0d4f8b"/>
+      <stop offset="1" stop-color="#1683c4"/>
+    </linearGradient>
+    <linearGradient id="runoff" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.45"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0.08"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="52" fill="url(#bg)"/>
+  <!-- rainfall, hanging from the top axis -->
+  <g fill="#9fe3ff">
+    <rect x="52" y="40" width="22" height="34" rx="4"/>
+    <rect x="80" y="40" width="22" height="62" rx="4"/>
+    <rect x="108" y="40" width="22" height="46" rx="4"/>
+    <rect x="136" y="40" width="22" height="20" rx="4"/>
+  </g>
+  <!-- runoff hydrograph -->
+  <path d="M36 204 L60 202 C82 200 96 120 122 116 C150 112 162 168 190 186 C204 195 214 198 222 199 L222 212 L36 212 Z"
+        fill="url(#runoff)"/>
+  <path d="M36 204 L60 202 C82 200 96 120 122 116 C150 112 162 168 190 186 C204 195 214 198 222 199"
+        fill="none" stroke="#ffffff" stroke-width="13" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- sparse observations on the curve -->
+  <g fill="#0d4f8b" stroke="#ffffff" stroke-width="5">
+    <circle cx="122" cy="116" r="9"/>
+    <circle cx="190" cy="186" r="9"/>
+  </g>
+</svg>

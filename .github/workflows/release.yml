@@ -1,0 +1,86 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: # build and self-test the installer without releasing (publish runs for tags only)
+
+jobs:
+  dist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build
+      - run: python -m build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  windows-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: |
+          pip install "sparsehydro @ git+https://github.com/CoC-MSD/SparseHydro@v1.0.0b1" --no-deps
+          pip install numpy pandas scipy pyarrow pymoo requests requests-toolbelt
+          pip install -e ".[freeze,gis]"
+      - name: Application icon
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python packaging/make_icon.py
+      - name: Freeze
+        run: pyinstaller packaging/sparsehydro-viewer.spec --noconfirm
+      - name: Self-test frozen build
+        # Windowed executable: no console, so the report goes to a file. Checks every unit hydrograph, composed
+        # models and traces, calibration in spawned worker processes, the project file and the main window.
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          $p = Start-Process dist\sparsehydro-viewer\sparsehydro-viewer.exe -ArgumentList '--self-test','selftest.txt' -Wait -PassThru
+          Get-Content selftest.txt
+          exit $p.ExitCode
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: frozen-self-test
+          path: selftest.txt
+      - name: Installer
+        run: |
+          $version = python -c "import sparsehydro_viewer; print(sparsehydro_viewer.__version__)"
+          choco install innosetup --no-progress -y
+          iscc /DAppVersion=$version packaging\installer.iss
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installer
+          path: packaging/Output/*.exe
+
+  publish:
+    needs: [dist, windows-installer]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      id-token: write   # PyPI trusted publishing
+      contents: write   # GitHub release assets
+    steps:
+      - uses: actions/download-artifact@v4
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*
+            windows-installer/*.exe
