@@ -107,7 +107,9 @@ def test_chart_actions_bind_to_the_active_chart(window, qtbot, sample_frame, sam
     window.nav.setCurrentRow(PAGES["Events"])
     assert tb.chart.plot is events.fit_plot
     events.tabs.setCurrentIndex(2)
-    assert tb.chart.plot is events.conv_plot
+    assert tb.chart.plot is events.weight_plot
+    events.tabs.setCurrentIndex(3)  # comparison table
+    assert tb.chart.plot is None
     events.tabs.setCurrentIndex(1)  # UH shapes: not a time series
     assert tb.chart.plot is None
 

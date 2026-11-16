@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
+from PySide6.QtCore import Qt
 
 from helpers import spec_for
 from sparsehydro_viewer.core.data import DatasetSpec, Period
@@ -298,13 +299,47 @@ def test_cancel_running_calibration(window, qtbot, sample_frame, sample_csv) -> 
 @pytest.mark.slow
 def test_events_page(window, qtbot, sample_frame, sample_csv) -> None:
     _load(window, qtbot, sample_frame, sample_csv)
+    from sparsehydro_viewer.core.events import EventConfig
+
     page = window.pages[2]
-    page.options.set_values({"uh": "gamma-uh"})
+    window.nav.setCurrentRow(2)
+    page.set_configs([EventConfig.for_uh("gamma-uh", pooled=True)])
+    page._add_working_model()
+    page.configs.item(1, 1).setCheckState(Qt.CheckState.Unchecked)  # working model: pooled only
+    page.configs.item(1, 2).setCheckState(Qt.CheckState.Checked)
+    assert [(c.per_event, c.pooled) for c in page.event_configs] == [(True, True), (False, True)]
+    assert len(window.ctx.session.ui("event_configs")) == 2
     page.run_analysis()
-    qtbot.waitUntil(lambda: page.analysis is not None, timeout=60000)
-    assert page.events.count() == len(page.analysis.global_events) > 0
+    qtbot.waitUntil(lambda: page.analysis is not None, timeout=120000)
+    a = page.analysis
+    assert [f.error for f in a.fits] == ["", ""]
+    n = len(a.global_events)
+    assert page.events.count() == n > 0
+    # whole record shown, with one overlay per configuration and mode
+    d0, d1 = page.fit_plot.data_range()
+    qtbot.waitUntil(lambda: page.fit_plot.x_range()[1] - page.fit_plot.x_range()[0] > 0.9 * (d1 - d0))
+    t0, t1 = page.fit_plot.x_range()
+    labels = [c.label for c in page.event_configs]
+    assert {k for k in page.fit_plot._curves if k.startswith("fit:")} == {
+        f"fit:{labels[0]}:per_event", f"fit:{labels[0]}:pooled", f"fit:{labels[1]}:pooled"}
+    assert page.compare.rowCount() == n + 1 and page.compare.columnCount() == 4
     for tab in range(4):
         page.tabs.setCurrentIndex(tab)
+    page.tabs.setCurrentIndex(0)
+    page._step(1)
+    gid = page._current_id()
+    w0, w1 = a.window(gid)
+    z0, z1 = page.fit_plot.x_range()
+    assert z1 - z0 < 0.5 * (t1 - t0) and "event #" in page.status_text()
+    page._show_all()
+    assert page.fit_plot.x_range()[1] - page.fit_plot.x_range()[0] > 0.9 * (t1 - t0)
+    page.compare.selectRow(0)
+    assert page._current_id() == int(page.compare.item(0, 0).data(Qt.ItemDataRole.UserRole))
+    page.configs.selectRow(0)
+    page._send_to_working_model()
+    pooled = a.fits[0].parameters("pooled")
+    sent = {k: window.ctx.session.values[k] for k in pooled if k in window.ctx.session.values}
+    assert sent and sent == pytest.approx({k: pooled[k] for k in sent})
     page._step(1)
     gid = page._current_id()
     page._exclude()

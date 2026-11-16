@@ -60,6 +60,15 @@ All notable changes are documented here. The format follows
   table linked to the hydrograph. Settings: period, storm or total volume, zone windows (tool v5.0.5 or
   guidelines), event detection. Sites gain the attributes "Average dry weather flow (ODWF-A)" and "Sewer
   system" that Qcritical needs; projects created earlier get them when opened.
+- Events workspace reworked: the hydrograph always shows the whole record with the global events shaded;
+  choosing an event (list, Previous/Next, the comparison table or a double-click on its span) zooms to it and
+  "Show all" (Home) returns to the full record. Several models can be fitted to the same events: any rain-driven
+  unit hydrograph or the working model, each per event (one parameter set per global event, warm-started) and/or
+  pooled (one parameter set for all events, sparsehydro's `PooledEventFitter`). Fits are overlaid (pooled
+  dashed), the Comparison tab gives the NSE of every model and mode per event with the mean, the details list
+  every model's fitted values, and "Use as working model" sends a configuration with its pooled (or the event's)
+  values to the Model page. Progress covers every fit, and Stop cancels between events. One failing model does
+  not lose the others. The configurations are saved in the project.
 - Unit hydrographs whose bounds allow responses too slow for the calibration period are reported once, by
   process and slider: the sliders concerned are marked in the Working model panel and the Model page explains
   the problem (sparsehydro's console warning, repeated on every evaluation, is no longer printed).

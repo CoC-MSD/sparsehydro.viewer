@@ -132,7 +132,8 @@ def test_event_analysis_reports_progress_and_cancels(sample_frame) -> None:
     a = run_event_analysis(sample_frame, {"uh": "gamma-uh"}, progress=lambda i, n, t: calls.append((i, n, t)))
     n = len(a.global_events)
     assert calls[0] == (0, 0, "detecting events")
-    assert [c[0] for c in calls[1:-1]] == list(range(n)) and calls[-1] == (n, n, "done")
+    assert [c[0] for c in calls[1:1 + n]] == list(range(n)) and calls[-1] == (n, n, "done")
+    assert all(c[1] == n for c in calls[1:])
     stop_after = {"left": 2}
 
     def should_stop() -> bool:
@@ -141,6 +142,33 @@ def test_event_analysis_reports_progress_and_cancels(sample_frame) -> None:
 
     with pytest.raises(InterruptedError):
         run_event_analysis(sample_frame, {"uh": "gamma-uh"}, should_stop=should_stop)
+
+
+@pytest.mark.slow
+def test_event_analysis_fits_several_configurations(sample_frame) -> None:
+    from sparsehydro_viewer.core.events import EventConfig, run_event_analysis
+
+    configs = [EventConfig.for_uh("gamma-uh", per_event=True, pooled=True),
+               EventConfig.for_uh("nash-uh", per_event=False, pooled=True)]
+    a = run_event_analysis(sample_frame, {}, configs=configs)
+    assert [f.error for f in a.fits] == ["", ""]
+    assert a.uh_key == "gamma-uh" and a.primary is a.fits[0]
+    assert a.fits[1].per_event is None and a.fits[1].pooled is not None
+    table = a.comparison_table()
+    assert list(table.columns)[1:] == [f"{configs[0].label} (per event)", f"{configs[0].label} (pooled)",
+                                       f"{configs[1].label} (pooled)"]
+    assert len(table) == len(a.global_events) + 1 and table["global_id"].iloc[-1] == "mean"
+    # the per-event fit is at least as good as one parameter set for all events, on average
+    assert table.iloc[-1, 1] >= table.iloc[-1, 2] - 1e-6
+    rt = EventConfig.from_dict(configs[0].to_dict())
+    assert rt == configs[0]
+
+
+def test_event_config_for_a_composed_model() -> None:
+    from sparsehydro_viewer.core.events import EventConfig
+
+    factory, output = EventConfig("working", model=spec_for("gamma-uh").to_dict()).factory()
+    assert output == "Q_pred" and factory() is not factory()
 
 
 def test_run_calibration_cancels(short_frame) -> None:

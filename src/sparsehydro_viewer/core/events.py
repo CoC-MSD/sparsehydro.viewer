@@ -1,14 +1,20 @@
-"""Event workflow: hierarchy detection and one unit hydrograph per global event.
+"""Event workflow: hierarchy detection, then fits of one or more model configurations.
 
-Wraps :func:`sparsehydro.events.detect_event_hierarchy` and
-:class:`sparsehydro.models.unithydrograph.GlobalSequentialFitter` and derives
-the tables and per-event windows the Events workspace shows.
+Detection wraps :func:`sparsehydro.events.detect_event_hierarchy`. Each
+:class:`EventConfig` is a model to fit to the detected events — a unit
+hydrograph on rain, or any model the viewer can build (e.g. the working
+model) — fitted
 
-The interactive event toolbox of Hydrology-Viewer (add/delete/split/merge
-events, peak edits, smoothing pins) needs override support in sparsehydro's
-detection (plan item L8).  :class:`EventOverrides` defines the storage format
-now so projects can carry edits; :func:`apply_overrides` applies the subset that
-can be honoured after detection (deleted global events).
+* **per event** with :class:`sparsehydro.calibration.GlobalSequentialFitter`
+  (one parameter set per global event), and/or
+* **pooled** with :class:`sparsehydro.calibration.PooledEventFitter` (one
+  parameter set for all events, scored per event).
+
+The interactive event toolbox of Hydrology-Viewer (add/split/merge events,
+peak edits, smoothing pins) needs override support in sparsehydro's detection.
+:class:`EventOverrides` defines the storage format so projects carry edits;
+:func:`apply_overrides` applies what can be honoured after detection (deleted
+global events).
 """
 
 from __future__ import annotations
@@ -26,6 +32,8 @@ from .options import OptionSpec
 SEASONS = {12: "Winter", 1: "Winter", 2: "Winter", 3: "Spring", 4: "Spring", 5: "Spring",
            6: "Summer", 7: "Summer", 8: "Summer", 9: "Fall", 10: "Fall", 11: "Fall"}
 SEASON_ORDER = ("Winter", "Spring", "Summer", "Fall")
+MODES = {"per_event": "per event", "pooled": "pooled"}
+
 
 def event_options() -> tuple[OptionSpec, ...]:
     """Options of the event analysis; the UH choices are every discovered UH that reads rain directly
@@ -35,13 +43,18 @@ def event_options() -> tuple[OptionSpec, ...]:
     return (
         OptionSpec("uh", "choice", "peak-tail-uh", label="Unit hydrograph",
                    choices=tuple(k for k in UH_KEYS if k not in NEEDS_EXCESS),
-                   doc="Shape fitted to each global event."),
+                   doc="Shape of the default configuration (used when no configuration is listed)."),
         OptionSpec("global_event_gap_days", "float", 1.0, label="Global gap [days]", minimum=0.01, maximum=30.0,
                    doc="Maximum separation of sub-event peaks within one global event."),
         OptionSpec("peak_weight", "float", 3.0, label="Peak weight", minimum=0.0, maximum=100.0,
                    doc="Fit weight inside sub-event peak zones."),
         OptionSpec("tail_weight", "float", 1.0, label="Tail weight", minimum=0.0, maximum=100.0,
                    doc="Fit weight elsewhere inside sub-events."),
+        OptionSpec("method", "choice", "Nelder-Mead", label="Optimiser",
+                   choices=("Nelder-Mead", "Powell", "L-BFGS-B", "differential_evolution"),
+                   doc="SciPy method for each fit (differential evolution is slower and global)."),
+        OptionSpec("warm_start", "bool", True, label="Warm start",
+                   doc="Start each event's fit from the previous event's parameters (per-event fits)."),
     )
 
 
@@ -81,9 +94,108 @@ class EventOverrides:
         return [n for n in names if getattr(self, n)]
 
 
+# ---------------------------------------------------------------------------- configurations
+
+
+@dataclass
+class EventConfig:
+    """A model to fit to the detected events.
+
+    :ivar label: Name shown in tables and legends.
+    :ivar uh: Unit hydrograph key, fitted directly on rain (``""`` when *model* is used).
+    :ivar model: A :class:`~.catalog.ModelSpec` as a dict (e.g. the working model with its values).
+    :ivar per_event: Fit one parameter set per global event.
+    :ivar pooled: Fit one parameter set for all events.
+    """
+
+    label: str
+    uh: str = ""
+    model: dict | None = None
+    per_event: bool = True
+    pooled: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"label": self.label, "uh": self.uh, "model": self.model, "per_event": self.per_event,
+                "pooled": self.pooled}
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> EventConfig:
+        return cls(d.get("label", "model"), d.get("uh", ""), d.get("model"), bool(d.get("per_event", True)),
+                   bool(d.get("pooled", False)))
+
+    @classmethod
+    def for_uh(cls, key: str, **modes) -> EventConfig:
+        from .catalog import uh_label
+
+        return cls(uh_label(key), uh=key, **modes)
+
+    def factory(self) -> tuple[Callable[[], Any], str]:
+        """``(model factory, predicted column)`` for the fitters."""
+        if self.uh:
+            return (lambda: build_uh(self.uh)), "Q_pred"
+        from .catalog import CATALOG, ModelSpec
+
+        spec = ModelSpec.from_dict(self.model or {})
+        output = CATALOG.predicted_key(spec)
+        return (lambda: CATALOG.instantiate(spec, strict=False)), output
+
+    def model_spec(self) -> Any:
+        """The configuration as a :class:`~.catalog.ModelSpec` (a UH becomes a one-component model)."""
+        from .catalog import ModelSpec
+
+        if self.uh:
+            return ModelSpec.from_dict({"kind": self.uh, "options": {}, "label": self.label})
+        return ModelSpec.from_dict(self.model or {})
+
+    @property
+    def modes(self) -> list[str]:
+        return [m for m, on in (("per_event", self.per_event), ("pooled", self.pooled)) if on]
+
+
+@dataclass
+class ConfigFit:
+    """Results of one configuration: the per-event summary and/or the pooled result."""
+
+    config: EventConfig
+    per_event: Any = None  # sparsehydro.calibration.SequentialFitSummary
+    pooled: Any = None  # sparsehydro.calibration.PooledFitResult
+    error: str = ""
+
+    def predicted(self, mode: str) -> pd.DataFrame | None:
+        if mode == "per_event" and self.per_event is not None:
+            return self.per_event.global_predicted
+        if mode == "pooled" and self.pooled is not None:
+            return self.pooled.predicted
+        return None
+
+    def parameters(self, mode: str, global_id: int | None = None) -> dict[str, float]:
+        """Fitted values: the pooled set, or the per-event set of *global_id*."""
+        if mode == "pooled":
+            return self.pooled.parameters if self.pooled is not None else {}
+        if self.per_event is None or global_id is None:
+            return {}
+        for g, cal in zip(self.per_event.events, self.per_event.calibration_results):
+            if int(g.global_id) == int(global_id):
+                return dict(zip(cal.param_names, map(float, cal.pareto_X[0])))
+        return {}
+
+
+def _span_nse(obs: pd.DataFrame, pred: pd.DataFrame, start, end) -> float:
+    sel = ((obs["datetime"] >= start) & (obs["datetime"] <= end)).to_numpy()
+    o = obs.loc[sel, "stormflow"].to_numpy(float)
+    p = pred.loc[sel, "Q_pred"].to_numpy(float)
+    denom = float(np.sum((o - o.mean()) ** 2)) if o.size else 0.0
+    return 1.0 - float(np.sum((o - p) ** 2)) / denom if denom > 0 else float("nan")
+
+
 @dataclass
 class EventAnalysis:
-    """Detection and per-event fit results for one dataset."""
+    """Detection and the fits of every configuration for one dataset.
+
+    ``summary`` / ``uh_key`` and the per-event helpers refer to the *primary*
+    fit (the first configuration fitted per event), which drives the event
+    list's NSE, the details and the unit hydrograph view.
+    """
 
     data: pd.DataFrame
     global_events: list[Any]
@@ -93,16 +205,23 @@ class EventAnalysis:
     dt_hours: float
     uh_key: str
     options: dict[str, Any]
+    fits: list[ConfigFit] = field(default_factory=list)
 
     def model_factory(self) -> Callable[[], Any]:
         return lambda: build_uh(self.uh_key)
 
+    @property
+    def primary(self) -> ConfigFit | None:
+        return next((f for f in self.fits if f.per_event is not None), None)
+
     # -- tables -----------------------------------------------------------
 
     def fitted_ids(self) -> list[int]:
-        return [int(g.global_id) for g in self.summary.events]
+        return [int(g.global_id) for g in self.summary.events] if self.summary is not None else []
 
     def fit_index(self, global_id: int) -> int | None:
+        if self.summary is None:
+            return None
         return next((i for i, g in enumerate(self.summary.events) if int(g.global_id) == int(global_id)), None)
 
     def event_table(self) -> pd.DataFrame:
@@ -131,14 +250,27 @@ class EventAnalysis:
             })
         return pd.DataFrame(rows, columns=cols)
 
+    def comparison_table(self) -> pd.DataFrame:
+        """NSE of every configuration and mode over every global event (the event's own window), plus
+        their mean: rows are events (and ``mean``), columns ``"<label> (<mode>)"``."""
+        events = sorted(self.global_events, key=lambda g: g.start_datetime)
+        obs = self.data[["datetime", "stormflow"]]
+        out = pd.DataFrame({"global_id": [int(g.global_id) for g in events]})
+        for fit in self.fits:
+            for mode in fit.config.modes:
+                pred = fit.predicted(mode)
+                if pred is None:
+                    continue
+                col = f"{fit.config.label} ({MODES[mode]})"
+                out[col] = [_span_nse(obs, pred, pd.Timestamp(g.start_datetime), pd.Timestamp(g.end_datetime))
+                            for g in events]
+        if len(out.columns) > 1:
+            means = out.drop(columns="global_id").mean(numeric_only=True)
+            out = pd.concat([out, pd.DataFrame([{"global_id": "mean", **means.to_dict()}])], ignore_index=True)
+        return out
+
     def span_nse(self, start: pd.Timestamp, end: pd.Timestamp) -> float:
-        obs = self.summary.global_observed
-        pred = self.summary.global_predicted
-        sel = ((obs["datetime"] >= start) & (obs["datetime"] <= end)).to_numpy()
-        o = obs.loc[sel, "stormflow"].to_numpy(float)
-        p = pred.loc[sel, "Q_pred"].to_numpy(float)
-        denom = float(np.sum((o - o.mean()) ** 2)) if o.size else 0.0
-        return 1.0 - float(np.sum((o - p) ** 2)) / denom if denom > 0 else float("nan")
+        return _span_nse(self.summary.global_observed, self.summary.global_predicted, start, end)
 
     def parameters(self, global_id: int) -> dict[str, float]:
         i = self.fit_index(global_id)
@@ -149,7 +281,7 @@ class EventAnalysis:
 
     def fitted_model(self, global_id: int) -> Any | None:
         params = self.parameters(global_id)
-        if not params:
+        if not params or not self.uh_key:
             return None
         m = build_uh(self.uh_key)
         m.initialize()
@@ -167,51 +299,100 @@ class EventAnalysis:
     def predicted(self) -> pd.DataFrame:
         return self.summary.global_predicted
 
+    def weights(self) -> np.ndarray:
+        """Fit weight per time step of the whole record: the peak weight from rise start to tail start of
+        each sub-event, the tail weight elsewhere inside sub-events, zero outside."""
+        t = self.data["datetime"].to_numpy()
+        w = np.zeros(len(t))
+        pw, tw = float(self.options["peak_weight"]), float(self.options["tail_weight"])
+
+        def span(a, b) -> slice:
+            return slice(int(np.searchsorted(t, np.datetime64(pd.Timestamp(a)))),
+                         int(np.searchsorted(t, np.datetime64(pd.Timestamp(b)), side="right")))
+
+        for s in self.sub_events:
+            z = span(s.start_datetime, s.end_datetime)
+            w[z] = np.maximum(w[z], tw)
+            z = span(s.rise_start_datetime, s.tail_start_datetime)
+            w[z] = np.maximum(w[z], pw)
+        return w
+
+
+# ---------------------------------------------------------------------------- running
+
 
 def run_event_analysis(data: pd.DataFrame, options: dict[str, Any], overrides: EventOverrides | None = None,
                        should_stop: Callable[[], bool] = lambda: False,
-                       progress: Callable[[int, int, str], None] | None = None) -> EventAnalysis:
-    """Detect events and fit one unit hydrograph per global event.
+                       progress: Callable[[int, int, str], None] | None = None,
+                       configs: list[EventConfig] | None = None) -> EventAnalysis:
+    """Detect events, then fit every configuration (per event and/or pooled).
 
-    :param data: Standardised frame (``datetime``, ``rain``, ``stormflow``).
+    :param data: Standardised frame (``datetime``, ``rain``, ``stormflow``; other columns such as
+        ``temperature_c`` are passed to the models).
     :param options: Values for :func:`event_options`.
     :param overrides: Manual edits; see :class:`EventOverrides`.
-    :param should_stop: Checked after detection and before each event's fit;
-        returning ``True`` raises :class:`InterruptedError`.
-    :param progress: ``progress(done, total, text)``; ``total`` is 0 while detecting.
+    :param should_stop: Checked between fits and between events; returning ``True`` raises
+        :class:`InterruptedError`.
+    :param progress: ``progress(done, total, text)`` over all fits; ``total`` is 0 while detecting.
+    :param configs: Models to fit; default: the options' unit hydrograph, per event.
     """
-    from sparsehydro.calibration import GlobalSequentialFitter
+    from sparsehydro.calibration import GlobalSequentialFitter, PooledEventFitter
     from sparsehydro.events import detect_event_hierarchy
 
+    from .catalog import CATALOG
     from .data import dt_hours
     from .options import resolve_options
 
     report = progress or (lambda i, n, text: None)
     opts = resolve_options(event_options(), options)
-    df = data[["datetime", "rain", "stormflow"]].copy()
+    configs = list(configs) if configs else [EventConfig.for_uh(opts["uh"])]
+    df = CATALOG.prepare_frame(data.reset_index(drop=True).copy())
     report(0, 0, "detecting events")
-    global_events, sub_events, savgol = detect_event_hierarchy(df, global_event_gap_days=opts["global_event_gap_days"])
+    global_events, sub_events, savgol = detect_event_hierarchy(
+        df[["datetime", "rain", "stormflow"]], global_event_gap_days=opts["global_event_gap_days"])
     global_events, sub_events = apply_overrides(global_events, sub_events, overrides)
     if should_stop():
         raise InterruptedError("cancelled")
-    uh_key = opts["uh"]
     n = len(global_events)
-    calls = [0]
+    total = sum(n * c.per_event + c.pooled for c in configs) or 1
+    done = [0]
 
-    def factory() -> Any:
-        # The fitter builds one model per global event (and one more at the end for its summary),
-        # so counting calls gives exact progress and a clean place to stop.
+    def step(text: str) -> None:
         if should_stop():
             raise InterruptedError("cancelled")
-        if calls[0] < n:
-            report(calls[0], n, f"fitting event {calls[0] + 1}/{n}")
-        calls[0] += 1
-        return build_uh(uh_key)
+        report(done[0], total, text)
 
-    summary = GlobalSequentialFitter(factory, df, global_events, sub_events).fit(
-        peak_weight=opts["peak_weight"], tail_weight=opts["tail_weight"], verbose=False)
-    report(n, n, "done")
-    return EventAnalysis(df, global_events, sub_events, savgol, summary, dt_hours(df), uh_key, opts)
+    fits: list[ConfigFit] = []
+    for config in configs:
+        fit = ConfigFit(config)
+        try:
+            factory, output = config.factory()
+            if config.per_event:
+                base = done[0]
+
+                def per_event_progress(i: int, _n: int, text: str, base=base, label=config.label) -> None:
+                    done[0] = base + i
+                    step(f"{label}: {text}")
+
+                fit.per_event = GlobalSequentialFitter(factory, df, global_events, sub_events, output).fit(
+                    method=opts["method"], peak_weight=opts["peak_weight"], tail_weight=opts["tail_weight"],
+                    verbose=False, warm_start=opts["warm_start"], progress=per_event_progress,
+                    should_stop=should_stop)
+                done[0] = base + n
+            if config.pooled:
+                step(f"{config.label}: pooled fit over {n} events")
+                fit.pooled = PooledEventFitter(factory, df, global_events, sub_events, output).fit(
+                    method=opts["method"], peak_weight=opts["peak_weight"], tail_weight=opts["tail_weight"])
+                done[0] += 1
+        except InterruptedError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - one configuration failing does not lose the others
+            fit.error = f"{type(exc).__name__}: {exc}"
+        fits.append(fit)
+    report(total, total, "done")
+    primary = next((f for f in fits if f.per_event is not None), None)
+    return EventAnalysis(df, global_events, sub_events, savgol, primary.per_event if primary else None,
+                         dt_hours(df), primary.config.uh if primary else "", opts, fits)
 
 
 def apply_overrides(global_events: list[Any], sub_events: list[Any],
@@ -223,4 +404,5 @@ def apply_overrides(global_events: list[Any], sub_events: list[Any],
             [s for s in sub_events if int(s.global_id) not in gone])
 
 
-__all__ = ["event_options", "SEASON_ORDER", "EventAnalysis", "EventOverrides", "apply_overrides", "run_event_analysis"]
+__all__ = ["MODES", "SEASON_ORDER", "ConfigFit", "EventAnalysis", "EventConfig", "EventOverrides", "apply_overrides",
+           "event_options", "run_event_analysis"]
