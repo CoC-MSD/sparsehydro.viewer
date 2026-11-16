@@ -37,6 +37,10 @@ class LiveResult:
     kernels: list[KernelCurve]
     dt_hours: float
     generation: int
+    #: Components and states for the calibration period (only while a view asks for them).
+    trace: dict | None = None
+    trace_fields: list | None = None
+    output_key: str = ""
 
 
 @dataclass
@@ -61,14 +65,18 @@ class _Worker(QObject):
         self._cal: Evaluator | None = None
         self._val: Evaluator | None = None
         self._generation = 0
+        self._last_values: dict[str, float] = {}
+        self.want_trace = False
 
-    def post(self, values: dict[str, float] | None, config: _Config | None) -> None:
+    def post(self, values: dict[str, float] | None, config: _Config | None, *, rerun: bool = False) -> None:
         with self._lock:
             if config is not None:
                 self._pending_config = config
                 self._generation += 1
             if values is not None:
                 self._pending_values = dict(values)
+            elif rerun and self._pending_values is None:
+                self._pending_values = dict(self._last_values)
 
     @Slot()
     def process(self) -> None:
@@ -91,11 +99,22 @@ class _Worker(QObject):
                     self.configured.emit(self._cal.objective_names, self._cal.minimize_flags)
                 if self._cal is None:
                     continue
+                if config is not None:  # a new model: forget the previous model's parameter names
+                    self._last_values = {}
+                if values is not None:
+                    self._last_values.update(values)
                 cal = self._cal.evaluate(values)
                 val = self._val.evaluate(values) if self._val is not None else None
                 curves = kernel_curves(self._cal.built, self._cal.dt_hours)
+                trace = fields = None
+                if self.want_trace:
+                    try:
+                        trace, fields = self._cal.trace(), self._cal.trace_fields()
+                    except Exception as exc:  # a model without a working trace still evaluates
+                        log.warning("trace unavailable: %s", exc)
                 self.ready.emit(LiveResult(cal, val, self._cal.datetime, self._cal.observed, self._cal.rain,
-                                           curves, self._cal.dt_hours, generation))
+                                           curves, self._cal.dt_hours, generation, trace, fields,
+                                           self._cal.predicted_key))
             except Exception as exc:
                 log.exception("live evaluation failed")
                 self.failed.emit(f"{type(exc).__name__}: {exc}")
@@ -138,6 +157,19 @@ class LiveEvaluationService(QObject):
     def request(self, values: dict[str, float]) -> None:
         self._worker.post(values, None)
         self._kick.emit()
+
+    def set_trace(self, enabled: bool) -> None:
+        """Compute components and states with every evaluation (re-evaluates now when switched on)."""
+        if enabled == self._worker.want_trace:
+            return
+        self._worker.want_trace = enabled
+        if enabled:
+            self._worker.post(None, None, rerun=True)
+            self._kick.emit()
+
+    @property
+    def trace_enabled(self) -> bool:
+        return self._worker.want_trace
 
     def shutdown(self) -> None:
         self._thread.quit()

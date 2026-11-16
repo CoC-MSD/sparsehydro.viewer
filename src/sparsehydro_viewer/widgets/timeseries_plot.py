@@ -97,6 +97,7 @@ class TimeseriesPlot(pg.GraphicsLayoutWidget):
             p.setDownsampling(auto=True, mode="peak")
         self._curves: dict[str, pg.PlotDataItem] = {}
         self._bands: dict[str, pg.FillBetweenItem] = {}
+        self._stacks: dict[str, list] = {}
         self._spans: list[pg.LinearRegionItem] = []
         self._region: pg.LinearRegionItem | None = None
         self._rain_item: pg.PlotDataItem | None = None
@@ -192,6 +193,42 @@ class TimeseriesPlot(pg.GraphicsLayoutWidget):
         band = self._bands.pop(key, None)
         if band is not None:
             self.flow_plot.removeItem(band)
+
+    def set_stack(self, key: str, t: np.ndarray | None, layers: list[tuple[str, np.ndarray, str]]) -> None:
+        """Draw *layers* (``(label, series, colour)``) as stacked areas under the flow curves.
+
+        Layers are cumulated in order, so the top edge of the stack is their
+        sum; each layer gets a legend entry. An empty list removes the stack.
+        """
+        self.clear_stack(key)
+        if not layers:
+            return
+        t = self._t if t is None else np.asarray(t, float)
+        items: list = []
+        base = np.zeros(len(t))
+        lower_item = pg.PlotDataItem(t, base, pen=None)
+        for label, y, color in layers:
+            top = base + np.nan_to_num(np.asarray(y, float))
+            upper_item = pg.PlotDataItem(t, top, pen=_pen(color, 0.8), name=label)
+            fill = QColor(color)
+            fill.setAlpha(95)
+            band = pg.FillBetweenItem(lower_item, upper_item, brush=fill)
+            band.setZValue(-6)
+            self.flow_plot.addItem(band, ignoreBounds=True)
+            upper_item.setZValue(-5)
+            self.flow_plot.addItem(upper_item)
+            items += [band, upper_item]
+            base, lower_item = top, upper_item
+        self._stacks[key] = items
+
+    def clear_stack(self, key: str) -> None:
+        for item in self._stacks.pop(key, []):
+            self.flow_plot.removeItem(item)
+            if isinstance(item, pg.PlotDataItem):
+                self.legend.removeItem(item)
+
+    def stack_labels(self, key: str) -> list[str]:
+        return [i.name() for i in self._stacks.get(key, []) if isinstance(i, pg.PlotDataItem)]
 
     def set_spans(self, spans: list[tuple[float, float] | tuple[float, float, str]], color: str | None = None) -> None:
         """Shade time spans (events, periods) on every panel; a span may carry its own colour."""

@@ -24,10 +24,13 @@ from PySide6.QtWidgets import (
 from .. import theme
 from ..core.catalog import CATALOG, ModelSpec, parameter_counts
 from ..core.data import epoch_seconds
+from ..core.trace import flow_parts
+from ..resources import icon
 from ..services import LiveResult
 from ..widgets import TimeseriesPlot, UHPreview
 from ..widgets.model_composer import ModelComposer, apply_renames
 from ..widgets.process_builder import ProcessBuilder
+from ..widgets.states_panel import StatesPanel
 from .common import num_item, objective_labels, page_header, text_item
 from .context import AppContext
 from .shell.page import Page
@@ -109,9 +112,19 @@ class ModelPage(Page):
                                       self._pin)
         self.clear_pins_action = self.action("Clear pinned shapes", "Remove pinned unit hydrographs", "clear",
                                              self.uh.clear_pinned)
-        uh_box = QGroupBox("Unit hydrographs (unit area)")
+        self.components_action = self.action(
+            "Components", "Show the simulated hydrograph as the sum of its individual hydrographs (each unit "
+            "hydrograph, each term of a sum)", "components", self._trace_needs_changed, checkable=True)
+        self.states = StatesPanel()
+        self.states.link_x(self.plot.flow_plot.getViewBox())
+        self.lower_tabs = QTabWidget()
+        self.lower_tabs.addTab(self.uh, "Unit hydrographs (unit area)")
+        self.lower_tabs.addTab(self.states, icon("states"), "Internal states")
+        self.lower_tabs.currentChanged.connect(lambda *_: self._trace_needs_changed())
+        uh_box = QGroupBox()
         ul = QVBoxLayout(uh_box)
-        ul.addWidget(self.uh, 1)
+        ul.setContentsMargins(4, 4, 4, 4)
+        ul.addWidget(self.lower_tabs, 1)
 
         right = QSplitter(Qt.Orientation.Vertical)
         right.addWidget(plot_box)
@@ -142,7 +155,25 @@ class ModelPage(Page):
     # ------------------------------------------------------------------ shell
 
     def context_actions(self):
-        return [self.pin_action, self.clear_pins_action]
+        return [self.components_action, None, self.pin_action, self.clear_pins_action]
+
+    def showEvent(self, ev) -> None:  # noqa: N802
+        super().showEvent(ev)
+        self._trace_needs_changed()
+
+    def hideEvent(self, ev) -> None:  # noqa: N802
+        super().hideEvent(ev)
+        self._trace_needs_changed()
+
+    def wants_trace(self) -> bool:
+        """The trace costs a second model run, so it is computed only while it is on screen."""
+        return self.isVisible() and (self.components_action.isChecked()
+                                     or self.lower_tabs.currentWidget() is self.states)
+
+    def _trace_needs_changed(self) -> None:
+        self.ctx.controller.live.set_trace(self.wants_trace())
+        if not self.components_action.isChecked():
+            self.plot.clear_stack("components")
 
     def active_chart(self):
         return self.plot
@@ -174,6 +205,23 @@ class ModelPage(Page):
 
     # ------------------------------------------------------------------ live results
 
+    def _show_trace(self, res: LiveResult) -> None:
+        """Stack the individual hydrographs under the simulation and feed the states panel."""
+        if res.trace is None or res.trace_fields is None:
+            return
+        arrays = dict(res.trace)
+        arrays.setdefault(res.output_key, res.calibration.predicted)
+        self.states.set_fields(res.trace_fields, self.ctx.session.model_spec.structure_key)
+        self.states.set_trace(self._t, arrays)
+        if self.components_action.isChecked():
+            fields = {f.name: f for f in res.trace_fields}
+            parts = flow_parts(res.trace_fields, arrays, res.output_key)
+            layers = [(fields[name].label, y, theme.series_color(i)) for i, (name, y) in enumerate(parts)]
+            self.plot.set_stack("components", self._t, layers)
+            self.components_action.setToolTip(
+                "Individual hydrographs: " + ", ".join(label for label, _, _ in layers) if layers
+                else "This model's output is not a sum of hydrographs")
+
     def _on_result(self, res: LiveResult) -> None:
         now = time.perf_counter()
         th = theme.current()
@@ -185,6 +233,7 @@ class ModelPage(Page):
         self.plot.set_curve("sim", self._t, res.calibration.predicted, color=th.predicted,
                             name="Simulated (working model)")
         self.uh.set_curves(res.kernels)
+        self._show_trace(res)
         labels = objective_labels(res.calibration.objectives)
         rows = list(res.calibration.objectives.items())
         self.metrics.setRowCount(len(rows))
@@ -197,6 +246,7 @@ class ModelPage(Page):
         self.constraints.setText(
             "" if not bad else "<span style='color:#D55E00'>Constraint violated: "
             + ", ".join(f"{k} (g = {g:.3g})" for k, g in bad.items()) + "</span>")
+        self._last_result = res
         dt = (now - self._last_t) if self._last_t else 0.0
         self._last_t = now
         self.status.setText(f"{len(res.observed):,} steps at {res.dt_hours * 60:g} min"

@@ -35,6 +35,43 @@ def _load(win, qtbot, frame, sample_csv, period: Period | None = None) -> None:
         win.ctx.session.add_dataset(spec, frame)
 
 
+def test_components_and_states_on_the_model_page(window, qtbot, sample_frame, sample_csv) -> None:
+    from sparsehydro_viewer.core.catalog import ModelSpec
+    from sparsehydro_viewer.core.processes import ProcessDesign, to_tree
+
+    s = window.ctx.session
+    live = window.ctx.controller.live
+    _load(window, qtbot, sample_frame, sample_csv)
+    window.nav.setCurrentRow(1)
+    page = window.pages[1]
+    assert not live.trace_enabled  # nothing on screen needs it: sliders stay as fast as before
+    with qtbot.waitSignal(window.ctx.controller.result, timeout=15000):
+        s.set_model(ModelSpec(to_tree(ProcessDesign(routing=["rtk-triangle", "gamma-uh"], sanitary=True))))
+
+    # Components: the simulation as the sum of its individual hydrographs
+    with qtbot.waitSignal(window.ctx.controller.result, timeout=15000) as sig:
+        page.components_action.trigger()
+    assert live.trace_enabled and sig.args[0].trace is not None
+    labels = page.plot.stack_labels("components")
+    assert len(labels) == 3 and any("UH 1" in x for x in labels) and any("san" in x for x in labels)
+
+    # Internal states tab: the losses' state is listed and plotted by default
+    page.lower_tabs.setCurrentWidget(page.states)
+    assert "wet.ia.ia_available" in page.states.fields
+    assert page.states.plotted() == ["wet.ia.ia_available"]
+    with qtbot.waitSignal(window.ctx.controller.result, timeout=5000):
+        window.params.rows["wet_ia_max"].slider.setValue(800)
+    assert page.states.plotted() == ["wet.ia.ia_available"]
+
+    # Turning both off stops computing the trace and removes the layer
+    page.components_action.trigger()
+    page.lower_tabs.setCurrentWidget(page.uh)
+    assert not live.trace_enabled and page.plot.stack_labels("components") == []
+    window.nav.setCurrentRow(0)
+    page.lower_tabs.setCurrentWidget(page.states)
+    assert not live.trace_enabled  # the page is hidden
+
+
 def test_sliders_drive_live_evaluation(window, qtbot, sample_frame, sample_csv) -> None:
     s = window.ctx.session
     _load(window, qtbot, sample_frame, sample_csv)

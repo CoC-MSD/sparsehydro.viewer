@@ -160,6 +160,21 @@ class Evaluator:
             constraints=dict(zip(names, map(float, g))),
         )
 
+    def trace(self) -> dict[str, np.ndarray]:
+        """Outputs, components and internal states at the current parameter values (see :mod:`.trace`).
+
+        Runs the model once more; call it only when a view shows the trace.
+        """
+        if not hasattr(self.model, "predict_trace"):
+            return {}
+        out = self.model.predict_trace()
+        return {k: np.asarray(v) for k, v in out.items() if k != "datetime"}
+
+    def trace_fields(self):
+        from .trace import trace_fields
+
+        return trace_fields(self.model)
+
     def evaluate_vector(self, param_names: Sequence[str], x: Iterable[float]) -> Evaluation:
         """Evaluate a solution vector from a calibration result."""
         return self.evaluate(dict(zip(param_names, map(float, x))))

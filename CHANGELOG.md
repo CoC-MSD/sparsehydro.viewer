@@ -37,6 +37,12 @@ All notable changes are documented here. The format follows
   `sparsehydro.load_extensions()`. Requires sparsehydro 1.0.0b1 or later. Solvers are built through
   sparsehydro's solver registry; Platypus NSGA-II and CMA-ES were added.
 - The analysis dataset is shown on the toolbar of every page and can be switched there.
+- Hydrograph components and internal states (Model page), from sparsehydro's model traces:
+  "Components" stacks the simulated hydrograph as its individual hydrographs (each unit hydrograph, the
+  sanitary term, each part of a peak-tail or mixture UH; sum weights applied), and the "Internal states" tab
+  lists the model's states and fluxes by component (remaining initial abstraction, tank storage, soil and
+  groundwater stores, snowpack, melt...) and plots the ticked ones on the hydrograph's time axis, one panel
+  per unit. Both follow the sliders; the trace is computed only while one of them is on screen.
 - Projects saved with step-based unit hydrograph parameters are converted to hours when opened (models,
   the working model and every run's Pareto set; see `core/migration.py`), and marked so it happens once.
 - Process builder (Model page): grow a model one process at a time - rainfall losses, a list of unit
