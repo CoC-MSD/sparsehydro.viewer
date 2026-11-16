@@ -80,6 +80,13 @@ All notable changes are documented here. The format follows
   fainter the older they are, and a slider replays the run report by report (it follows a running calibration
   until dragged back). The convergence chart can also show the front's size and its normalised hypervolume per
   report (`core.diagnostics.front_history`, exact hypervolume up to four objectives).
+- User documentation (Sphinx, built on the sparsehydro docs setup): installation, a getting-started tutorial on the
+  sample data, one page per workspace, keyboard shortcuts, and reference pages for the project file and its
+  water-ontology mapping, the MSDGC criteria, extensions, the architecture and the `core` API. Screenshots are
+  generated, not captured: `docs/scripts/screenshots.py` drives the application offscreen on the sample data (with
+  throwaway settings), and the docs workflow runs it before a strict build and publishes to GitHub Pages.
+- Calibrate: earlier generations no longer set the front chart's axes, so early poor solutions do not squeeze the
+  current front into a corner (`ParetoLayer.in_range`).
 - GIS import and export of sewersheds and sites (Sites page, Map tab; optional `gis` extra with pyogrio and pyproj,
   bundled in the Windows installer). Reads file geodatabases (choose the layer), shapefiles, GeoPackage, GeoJSON,
   KML/KMZ and other GDAL formats and reprojects to longitude/latitude. The wizard previews the layer on a map and maps

@@ -66,6 +66,17 @@ Installed packages are found through the `sparsehydro.extensions` entry-point gr
 also be listed in the settings (`extensions/modules`). Both are loaded with `sparsehydro.load_extensions()`; a
 failing extension is reported, not fatal.
 
+## Documentation
+
+The user guide (installation, a tutorial, one page per workspace, shortcuts) and the reference (project file,
+MSDGC criteria, extensions, architecture, API) are in [`docs/`](docs/index.md):
+
+```bash
+pip install -e ".[docs,gis]"
+python docs/scripts/screenshots.py          # regenerate the screenshots after interface changes
+sphinx-build -W --keep-going -b html docs docs/_build/html
+```
+
 ## Development
 
 ```bash

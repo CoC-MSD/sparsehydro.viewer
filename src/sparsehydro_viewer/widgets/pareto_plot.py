@@ -24,6 +24,8 @@ class ParetoLayer:
     :ivar alpha: Fill opacity 0-255 (overrides *faded*), e.g. to fade earlier generations by age.
     :ivar legend: Add a legend entry (off for all but one of a series of history layers).
     :ivar clickable: Emit :attr:`ParetoPlot.pointClicked` for its points.
+    :ivar in_range: Count its points when fitting the axes (off for context such as earlier generations, whose
+        early, poor points would otherwise squeeze the current front into a corner).
     """
 
     key: str
@@ -37,6 +39,7 @@ class ParetoLayer:
     alpha: int | None = None
     legend: bool = True
     clickable: bool = True
+    in_range: bool = True
 
 
 class ParetoPlot(QWidget):
@@ -146,7 +149,7 @@ class ParetoPlot(QWidget):
             if layer.clickable:
                 # sigClicked emits (item, points, mouse_event); keep the key out of the positional slots.
                 sp.sigClicked.connect(lambda _item, pts, *_ev, _k=layer.key: self._clicked(_k, pts))
-            self.plot.addItem(sp)
+            self.plot.addItem(sp, ignoreBounds=not layer.in_range)
             if layer.knee is not None and 0 <= layer.knee < len(x):
                 self.plot.addItem(pg.ScatterPlotItem([x[layer.knee]], [y[layer.knee]], size=layer.size + 9,
                                                      brush=None, pen=pg.mkPen(layer.color, width=1.5)))

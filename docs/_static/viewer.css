@@ -1,0 +1,18 @@
+/* Screenshots: a thin frame so the light window stands out on the light page, and no upscaling. */
+img.screenshot {
+  border: 1px solid var(--pst-color-border);
+  border-radius: 6px;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
+  max-width: 100%;
+  height: auto;
+  margin: 0.5rem 0 1.25rem;
+}
+
+/* Keyboard keys in the shortcut tables. */
+kbd {
+  font-size: 0.85em;
+  padding: 0.1em 0.4em;
+  border: 1px solid var(--pst-color-border);
+  border-radius: 4px;
+  background: var(--pst-color-surface);
+}

@@ -58,7 +58,7 @@ def test_monitor_shows_a_chosen_run_with_its_history(window) -> None:
     page.history.setChecked(True)
     layers = page.front._layers
     assert len(layers) == 12 and layers[-1].key == a.id
-    assert all(not layer.clickable and layer.alpha is not None for layer in layers[:-1])
+    assert all(not layer.clickable and not layer.in_range and layer.alpha is not None for layer in layers[:-1])
     assert layers[0].alpha < layers[-2].alpha  # older is fainter
     assert sum(layer.legend for layer in layers[:-1]) == 1
 

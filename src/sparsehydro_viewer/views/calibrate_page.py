@@ -644,7 +644,7 @@ class CalibratePage(Page):
                 age = (g + 1) / k  # 0 (oldest) .. 1 (newest)
                 layers.append(ParetoLayer(f"{run.id}:h{g}", "earlier generations", np.where(flags, F, -F),
                                           run.objective_names, muted, size=6, alpha=int(20 + 120 * age),
-                                          legend=m == len(earlier) - 1, clickable=False))
+                                          legend=m == len(earlier) - 1, clickable=False, in_range=False))
         if replaying:
             F = np.atleast_2d(run.history[k - 1][2])
             layers.append(ParetoLayer(run.id, f"report {k}", np.where(flags, F, -F), run.objective_names,
