@@ -7,7 +7,6 @@ hidden = collect_submodules("sparsehydro_viewer") + collect_submodules("sparsehy
     "pymoo.algorithms.moo.nsga2",
     "pymoo.operators.crossover.sbx",
     "pymoo.operators.mutation.pm",
-    "scipy.special._cdflib",
 ]
 
 # torch is a declared dependency of sparsehydro but unused by the viewer; platypus is GPL-3.0 (see

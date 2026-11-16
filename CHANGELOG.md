@@ -69,6 +69,11 @@ All notable changes are documented here. The format follows
   every model's fitted values, and "Use as working model" sends a configuration with its pooled (or the event's)
   values to the Model page. Progress covers every fit, and Stop cancels between events. One failing model does
   not lose the others. The configurations are saved in the project.
+- `sparsehydro-viewer --self-test REPORT` checks an installation (every unit hydrograph, composed models and their
+  traces, small calibrations in spawned worker processes, a project round trip, the main window) and writes a
+  report; optional components such as the Platypus optimizers are reported as unavailable without failing. The
+  release workflow runs it on the frozen executable instead of `--version`, keeps the report, and can be started
+  by hand to build and test the installer without publishing.
 - Unit hydrographs whose bounds allow responses too slow for the calibration period are reported once, by
   process and slider: the sliders concerned are marked in the Working model panel and the Model page explains
   the problem (sparsehydro's console warning, repeated on every evaluation, is no longer printed).
