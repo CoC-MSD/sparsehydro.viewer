@@ -95,6 +95,15 @@ All notable changes are documented here. The format follows
     selected solutions as thinner lines.
   - Simulations of selected solutions are shared and cached (`core/simulate.py`), so returning to a solution or
     opening it on the other page is immediate.
+- Earlier generations keep their parameter sets. Every progress report of a calibration now stores the front's
+  parameter vectors with its objectives (sparsehydro's solver callbacks pass `pareto_X`), saved in the project
+  (at most 200 reports per run: the first, the last and evenly spaced ones). Their solutions can therefore be
+  clicked and simulated like those of the final front: in Calibrate's front chart (with "Earlier generations" or
+  while replaying a report, and on the latest report of a running calibration), and in Explore, whose new
+  **Earlier generations** action draws the history behind the front. A selected earlier solution shows its
+  hydrograph, parameters and unit hydrograph, can be Ctrl+clicked together with final solutions, and "Load into
+  sliders" takes it. Runs saved before this (or by solvers that report no parameter sets) show their history as
+  before, not clickable, and say why.
 - Clickable legends on every chart: clicking a legend symbol hides or shows its series, including everything
   drawn for it (a band's fill, a stacked component's fill and edge, all earlier-generation layers together), and a
   hidden series stays hidden when the chart redraws (slider moves, new selections, rebuilt state panels). Bands

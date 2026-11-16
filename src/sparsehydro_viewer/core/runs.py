@@ -23,6 +23,9 @@ from .solvers import SolverSpec
 
 RunStatus = Literal["queued", "running", "finished", "failed", "cancelled", "manual"]
 
+#: Reports kept at most when a run is saved (first, last and evenly spaced ones), so project files stay bounded.
+MAX_STORED_REPORTS = 200
+
 
 def new_id() -> str:
     return uuid.uuid4().hex[:10]
@@ -35,6 +38,8 @@ class RunRecord:
     :ivar pareto_X: ``(m, len(param_names))`` solutions (calibrated parameters only).
     :ivar pareto_F: ``(m, len(objective_names))`` objectives, minimisation form.
     :ivar history: Per-report ``(generation, n_evals, F)`` snapshots of the front.
+    :ivar history_params: Parameter sets of each report's front (same order as *history*; ``None`` for a
+        report without them: older projects, solvers that do not report them).
     :ivar fixed_values: Values of non-calibrated parameters during the run.
     :ivar n_params_total: Total scalar + vector parameters of the model.
     """
@@ -57,6 +62,25 @@ class RunRecord:
     pareto_X: np.ndarray = field(default_factory=lambda: np.empty((0, 0)))
     pareto_F: np.ndarray = field(default_factory=lambda: np.empty((0, 0)))
     history: list[tuple[int, int, np.ndarray]] = field(default_factory=list)
+    history_params: list[np.ndarray | None] = field(default_factory=list)
+
+    # -- history ------------------------------------------------------------
+
+    def add_report(self, generation: int, n_evals: int, F: np.ndarray, X: np.ndarray | None = None) -> None:
+        """Append a progress report: the current front's objectives and, when given, its parameter sets."""
+        F = np.atleast_2d(np.asarray(F, dtype=float))
+        if X is not None:
+            X = np.atleast_2d(np.asarray(X, dtype=float))
+            if len(X) != len(F):
+                X = None
+        while len(self.history_params) < len(self.history):  # reports appended to history directly
+            self.history_params.append(None)
+        self.history.append((int(generation), int(n_evals), F))
+        self.history_params.append(X)
+
+    def history_X(self, report: int) -> np.ndarray | None:
+        """Parameter sets of report *report* (position in :attr:`history`), or ``None`` when not stored."""
+        return self.history_params[report] if 0 <= report < len(self.history_params) else None
 
     # -- derived ------------------------------------------------------------
 
@@ -79,10 +103,18 @@ class RunRecord:
         flags = np.asarray(self.minimize_flags, dtype=bool)
         return np.where(flags, self.pareto_F, -self.pareto_F)
 
-    def solution_values(self, index: int) -> dict[str, float]:
-        """All scalar parameter values of solution *index* (fixed ones included)."""
+    def solution_values(self, index: int, generation: int | None = None) -> dict[str, float]:
+        """All scalar parameter values of solution *index* (fixed ones included): of the final front, or of
+        the front of report *generation*."""
+        if generation is None:
+            x = self.pareto_X[index]
+        else:
+            X = self.history_X(generation)
+            if X is None:
+                raise ValueError(f"report {generation + 1} of {self.label} has no stored parameter sets")
+            x = X[index]
         out = dict(self.fixed_values)
-        out.update(dict(zip(self.param_names, map(float, self.pareto_X[index]))))
+        out.update(dict(zip(self.param_names, map(float, x))))
         return out
 
     def knee_index(self) -> int:
@@ -113,15 +145,31 @@ class RunRecord:
             "n_params_total": self.n_params_total,
         }
 
+    def stored_reports(self) -> list[int]:
+        """Positions of the reports written to disk: all, or the first, last and evenly spaced ones beyond
+        :data:`MAX_STORED_REPORTS`."""
+        n = len(self.history)
+        if n <= MAX_STORED_REPORTS:
+            return list(range(n))
+        return sorted(set(np.linspace(0, n - 1, MAX_STORED_REPORTS).round().astype(int).tolist()))
+
     def save_arrays(self, path: Path) -> None:
-        gens = np.array([h[0] for h in self.history], dtype=int)
-        evals = np.array([h[1] for h in self.history], dtype=int)
-        sizes = np.array([len(h[2]) for h in self.history], dtype=int)
+        keep = self.stored_reports()
+        history = [self.history[i] for i in keep]
+        params = [self.history_X(i) for i in keep]
+        gens = np.array([h[0] for h in history], dtype=int)
+        evals = np.array([h[1] for h in history], dtype=int)
+        sizes = np.array([len(h[2]) for h in history], dtype=int)
         width = len(self.objective_names)
-        stacked = np.concatenate([np.asarray(h[2], float).reshape(-1, width) for h in self.history]) \
-            if self.history else np.empty((0, width))
+        stacked = np.concatenate([np.asarray(h[2], float).reshape(-1, width) for h in history]) \
+            if history else np.empty((0, width))
+        n_par = len(self.param_names)
+        x_sizes = np.array([0 if x is None else len(x) for x in params], dtype=int)
+        x_stacked = np.concatenate([np.asarray(x, float).reshape(-1, n_par) for x in params if x is not None]) \
+            if x_sizes.sum() else np.empty((0, n_par))
         np.savez_compressed(path, pareto_X=self.pareto_X, pareto_F=self.pareto_F,
-                            hist_gen=gens, hist_evals=evals, hist_sizes=sizes, hist_F=stacked)
+                            hist_gen=gens, hist_evals=evals, hist_sizes=sizes, hist_F=stacked,
+                            hist_xsizes=x_sizes, hist_X=x_stacked)
 
     def arrays_blob(self) -> bytes:
         """Pareto set and history as one compressed blob (project database)."""
@@ -150,9 +198,15 @@ class RunRecord:
                 offs = np.concatenate([[0], np.cumsum(z["hist_sizes"])])
                 rec.history = [(int(g), int(e), z["hist_F"][offs[i]:offs[i + 1]])
                                for i, (g, e) in enumerate(zip(z["hist_gen"], z["hist_evals"]))]
+                if "hist_X" in z.files:  # projects saved before parameter sets were kept have none
+                    xo = np.concatenate([[0], np.cumsum(z["hist_xsizes"])])
+                    rec.history_params = [z["hist_X"][xo[i]:xo[i + 1]] if z["hist_xsizes"][i] else None
+                                          for i in range(len(rec.history))]
+                else:
+                    rec.history_params = [None] * len(rec.history)
         if rec.status in ("queued", "running"):
             rec.status = "cancelled"  # the app closed while it was running
         return rec
 
 
-__all__ = ["RunRecord", "RunStatus", "new_id"]
+__all__ = ["MAX_STORED_REPORTS", "RunRecord", "RunStatus", "new_id"]

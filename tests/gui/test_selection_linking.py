@@ -147,3 +147,66 @@ def test_selection_is_shared_between_explore_and_compare(loaded, qtbot) -> None:
     assert set(s.selection.indices("a")) == set(s.filter_rows["a"])
     s.remove_runs(["b"])  # removing a run prunes its selection and filter
     assert "b" not in s.filter_rows and s.selection.indices("b") == []
+
+
+def _with_history(run: RunRecord, n_reports: int, with_x: bool = True) -> RunRecord:
+    rng = np.random.default_rng(5)
+    for g in range(n_reports):
+        m = 5
+        X = np.column_stack([rng.uniform(1.5, 4, m), rng.uniform(0.5, 3, m), rng.uniform(20, 120, m)])
+        t = np.sort(rng.random(m))
+        F = np.column_stack([-(0.1 + 0.4 * t) + 1.0 / (g + 1), 30 * (1 - t) + 20.0 / (g + 1)])
+        run.add_report(g + 1, 10 * (g + 1), F, X if with_x else None)
+    return run
+
+
+def test_earlier_generations_are_clickable_and_simulated(loaded, qtbot, tmp_path) -> None:
+    from sparsehydro_viewer.views.common import HISTORY_LABEL, history_key
+
+    window = loaded
+    s = window.ctx.session
+    s.add_run(_with_history(_run("h", "H", 8, 3), 6))
+    s.add_run(_with_history(_run("n", "N", 8, 4), 3, with_x=False))  # e.g. an older project: objectives only
+
+    # Calibrate: history points select a solution of that report
+    calib = next(p for p in window.pages if p.title == "Calibrate")
+    window.nav.setCurrentRow(window.pages.index(calib))
+    calib.monitor_box.setCurrentIndex(calib.monitor_box.findData("h"))
+    calib.history.setChecked(True)
+    layers = {layer.key: layer for layer in calib.front._layers}
+    assert layers[history_key("h", 2)].clickable and layers[history_key("h", 2)].label == HISTORY_LABEL
+    calib.front.pointPicked.emit(history_key("h", 2), 4, False)
+    ref = SolutionRef("h", 4, 2)
+    assert s.selection.primary == ref and ref.label() == "#4 (report 3)"
+    assert calib.front.selection() == {history_key("h", 2): [4]}
+    calib.monitor_box.setCurrentIndex(calib.monitor_box.findData("n"))
+    assert not any(layer.clickable for layer in calib.front._layers if layer.label == HISTORY_LABEL)
+    calib.front.pointPicked.emit(history_key("n", 0), 1, False)  # refused: nothing to simulate
+    assert s.selection.primary == ref
+
+    # Explore: the same selection is drawn; the toggle shows the history in the scatter
+    explore = window.explore
+    window.show_explore("h")
+    qtbot.waitUntil(lambda: _lines(explore) == ["sol:2:4"], timeout=20000)
+    assert "report 3" in explore.selection_info.text() and explore.params.rowCount() >= 3
+    assert history_key("h", 2) not in [layer.key for layer in explore.pareto._layers]
+    explore.history_action.trigger()
+    keys = [layer.key for layer in explore.pareto._layers]
+    assert keys[:6] == [history_key("h", g) for g in range(6)] and keys[-1] == "h"
+    assert explore.pareto.selection() == {history_key("h", 2): [4]}
+    # Ctrl+click a final-front solution too: one line each, and Load into sliders takes the primary one
+    explore.pareto.pointPicked.emit(history_key("h", 5), 0, True)
+    explore.pareto.pointPicked.emit("h", 1, True)
+    qtbot.waitUntil(lambda: _lines(explore) == ["sol:2:4", "sol:5:0", "sol:None:1"], timeout=20000)
+    s.select_in_run("h", [SolutionRef("h", 0, 5)])
+    explore._load()
+    expected = s.run("h").solution_values(0, generation=5)
+    assert s.values["alpha"] == pytest.approx(expected["alpha"])
+
+    # the history survives save and reload with its parameter sets
+    path = s.project.save(tmp_path / "history.shproj")
+    from sparsehydro_viewer.core.project import Project
+
+    back = Project.load(path)
+    np.testing.assert_array_equal(back.run("h").history_X(2), s.run("h").history_X(2))
+    assert back.run("n").history_params == [None, None, None]

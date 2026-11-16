@@ -185,7 +185,7 @@ class CalibrationService(QObject):
                     rec.fixed_values = dict(data["fixed_values"])
                     rec.n_params_total = int(data["n_params_total"])
                 elif kind == "progress":
-                    rec.history.append((data["generation"], data["n_evals"], np.asarray(data["pareto_F"])))
+                    rec.add_report(data["generation"], data["n_evals"], data["pareto_F"], data.get("pareto_X"))
                     rec.elapsed_s = float(data["elapsed_s"])
                     self._progress[run_id] = self._fraction(rec, int(data["generation"]), int(data["n_evals"]))
                     grew = True

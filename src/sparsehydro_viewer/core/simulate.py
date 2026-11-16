@@ -103,7 +103,7 @@ def solution_vector(run: RunRecord, ref: SolutionRef) -> np.ndarray:
     """Parameter vector (in ``run.param_names`` order) of a solution of the final front or of an earlier report."""
     if ref.generation is None:
         return np.asarray(run.pareto_X[ref.index], float)
-    X = run.history_X(ref.generation) if hasattr(run, "history_X") else None
+    X = run.history_X(ref.generation)
     if X is None:
         raise ValueError(f"{run.label}: report {ref.generation + 1} has no stored parameter sets")
     return np.asarray(X[ref.index], float)

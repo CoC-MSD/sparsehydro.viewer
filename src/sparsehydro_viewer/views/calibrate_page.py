@@ -32,10 +32,20 @@ from ..core.catalog import CATALOG, parameter_counts
 from ..core.diagnostics import front_history
 from ..core.objectives import OBJECTIVES, ObjectiveSpec
 from ..core.runs import RunRecord, new_id
+from ..core.selection import SolutionRef
 from ..core.solvers import SOLVERS, SolverSpec
 from ..widgets import OptionForm, ParetoLayer, ParetoPlot
 from ..widgets.legend import ToggleLegend
-from .common import num_item, objective_better, objective_labels, page_header, text_item
+from .common import (
+    history_key,
+    history_layers,
+    num_item,
+    objective_better,
+    objective_labels,
+    page_header,
+    parse_history_key,
+    text_item,
+)
 from .context import AppContext
 from .shell.page import Page
 
@@ -177,7 +187,8 @@ class CalibratePage(Page):
         self.monitor_box.currentIndexChanged.connect(self._draw_monitor)
         self.history = QCheckBox("Earlier generations")
         self.history.setToolTip("Draw the fronts of earlier reports behind the current one, fainter the older they "
-                                "are (one run at a time)")
+                                "are (one run at a time). Their solutions can be clicked to select them when the run "
+                                "kept their parameter sets")
         self.history.toggled.connect(self._draw_monitor)
         self.generation = QSlider(Qt.Orientation.Horizontal)
         self.generation.setMinimum(1)
@@ -226,6 +237,9 @@ class CalibratePage(Page):
         s.periodsChanged.connect(self._update_hint)
         s.modelRenamed.connect(self._update_hint)
         ctx.calibration.progress.connect(self._on_progress)
+        self.front.pointPicked.connect(self._front_picked)
+        self.front.selectionCleared.connect(s.clear_selection)
+        s.solutionSelectionChanged.connect(self._mark_front)
         ctx.calibration.status.connect(lambda rid, _text: self._on_run_changed(rid))
         ctx.calibration.started.connect(self._on_run_changed)
         ctx.calibration.finished.connect(self._on_finished)
@@ -510,8 +524,6 @@ class CalibratePage(Page):
     SELECTED, ACTIVE = "__selected__", "__active__"
     #: Convergence measures besides an objective name.
     SIZE, HV = "__front_size__", "__hypervolume__"
-    #: Earlier generations drawn at most (evenly thinned beyond), to keep the front chart responsive.
-    MAX_HISTORY_LAYERS = 40
 
     def _fill_monitor_box(self) -> None:
         current = self.monitor_box.currentData()
@@ -637,27 +649,52 @@ class CalibratePage(Page):
         flags = np.asarray(run.minimize_flags, dtype=bool)
         layers: list[ParetoLayer] = []
         if self.history.isChecked() and k > 1:
-            earlier = list(range(k - 1))
-            if len(earlier) > self.MAX_HISTORY_LAYERS:
-                earlier = sorted(set(np.linspace(0, k - 2, self.MAX_HISTORY_LAYERS).round().astype(int)))
-            muted = theme.current().muted
-            for m, g in enumerate(earlier):
-                F = np.atleast_2d(run.history[g][2])
-                if not F.size:
-                    continue
-                age = (g + 1) / k  # 0 (oldest) .. 1 (newest)
-                layers.append(ParetoLayer(f"{run.id}:h{g}", "earlier generations", np.where(flags, F, -F),
-                                          run.objective_names, muted, size=6, alpha=int(20 + 120 * age),
-                                          legend=m == len(earlier) - 1, clickable=False, in_range=False))
+            layers += history_layers(run, upto=k - 1, color=theme.current().muted)
         if replaying:
             F = np.atleast_2d(run.history[k - 1][2])
-            layers.append(ParetoLayer(run.id, f"report {k}", np.where(flags, F, -F), run.objective_names,
-                                      theme.series_color(0)))
+            layers.append(ParetoLayer(history_key(run.id, k - 1), f"report {k}", np.where(flags, F, -F),
+                                      run.objective_names, theme.series_color(0),
+                                      clickable=run.history_X(k - 1) is not None))
             self.front_box.setTitle(f"Front at report {k} of {n}")
         else:
             layers.append(self._current_layer(run, theme.series_color(0)))
             self.front_box.setTitle("Final front" if run.has_results else "Current front")
         self.front.set_layers(layers)
+        self._mark_front()
+
+    # -- selecting solutions in the front (shared with Explore and Compare) -----------------------------
+
+    def _front_picked(self, key: str, index: int, add: bool) -> None:
+        """A click on the front selects that solution in the session: a member of the final front, or of an
+        earlier report when its parameter sets were kept."""
+        s = self.ctx.session
+        run_id, report = parse_history_key(key)
+        run = s.run(run_id)
+        if run is None:
+            return
+        if report is not None and run.history_X(report) is None:
+            self.window().statusBar().showMessage(
+                "This report has no stored parameter sets (an older project, or a solver that does not report "
+                "them), so its solutions cannot be selected.", 8000)
+            return
+        ref = SolutionRef(run_id, index, report)
+        if add:
+            s.toggle_selected(ref)
+        else:
+            s.select_in_run(run_id, [ref], ref)
+        self.window().statusBar().showMessage(
+            f"Selected {run.label}: solution {ref.label()} - see its hydrograph on Explore.", 6000)
+
+    def _mark_front(self, _selection=None) -> None:
+        selection = self.ctx.session.selection
+        marks: dict[str, list[int]] = {}
+        for ref in selection.refs:
+            key = ref.run_id if ref.generation is None else history_key(ref.run_id, ref.generation)
+            marks.setdefault(key, []).append(ref.index)
+        p = selection.primary
+        primary = None if p is None else (p.run_id if p.generation is None else history_key(p.run_id, p.generation),
+                                          p.index)
+        self.front.set_selection(marks, primary=primary)
 
     def _front_history(self, run: RunRecord):
         """Front statistics, recomputed only when the run has reported again."""
@@ -673,9 +710,11 @@ class CalibratePage(Page):
         flags = np.asarray(run.minimize_flags, dtype=bool)
         if run.has_results:
             values, knee = run.display_F(), run.knee_index()
-        elif run.history:
-            F = np.atleast_2d(run.history[-1][2])
-            values, knee = np.where(flags, F, -F), None
+        elif run.history:  # still running: the latest report (selectable when its parameter sets came with it)
+            last = len(run.history) - 1
+            F = np.atleast_2d(run.history[last][2])
+            return ParetoLayer(history_key(run.id, last), run.label, np.where(flags, F, -F), run.objective_names,
+                               color, clickable=run.history_X(last) is not None)
         else:
             values, knee = np.empty((0, len(flags))), None
         return ParetoLayer(run.id, run.label, values, run.objective_names, color, knee=knee)

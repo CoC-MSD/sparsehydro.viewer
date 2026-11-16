@@ -44,8 +44,8 @@ def run_calibration(payload: CalibrationPayload, emit: Emit, should_stop: Callab
     """Run one calibration and return the result as plain data.
 
     Progress messages are ``emit("progress", {...})`` with keys
-    ``generation``, ``n_evals``, ``pareto_F`` (minimisation form) and
-    ``elapsed_s``.
+    ``generation``, ``n_evals``, ``pareto_F`` (minimisation form), ``pareto_X``
+    (the front's parameter sets, or ``None``) and ``elapsed_s``.
 
     :param payload: Run configuration and data.
     :param emit: Message sink.
@@ -76,6 +76,9 @@ def run_calibration(payload: CalibrationPayload, emit: Emit, should_stop: Callab
             "generation": int(info.get("generation", 0)),
             "n_evals": int(info.get("n_evals", 0)),
             "pareto_F": np.asarray(info.get("pareto_F", np.empty((0, len(names)))), dtype=float),
+            # parameter sets of the same front (sparsehydro reports them from 1.0.0b2), so earlier
+            # generations can be inspected and re-simulated
+            "pareto_X": None if info.get("pareto_X") is None else np.asarray(info["pareto_X"], dtype=float),
             "elapsed_s": time.perf_counter() - t0,
         })
 

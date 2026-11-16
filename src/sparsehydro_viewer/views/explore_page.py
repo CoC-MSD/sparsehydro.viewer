@@ -34,7 +34,16 @@ from ..core.selection import SolutionRef, SolutionSelection
 from ..core.simulate import MAX_LINES, SolutionSeries, simulate_solutions
 from ..services import LiveResult
 from ..widgets import AxisSpec, ParallelCoordinates, ParetoLayer, ParetoPlot, TimeseriesPlot, UHPreview
-from .common import num_item, objective_better, objective_labels, page_header, text_item
+from .common import (
+    history_key,
+    history_layers,
+    num_item,
+    objective_better,
+    objective_labels,
+    page_header,
+    parse_history_key,
+    text_item,
+)
 from .context import AppContext
 from .shell.page import Page
 
@@ -72,6 +81,10 @@ class ExplorePage(Page):
         self.components_action = self.action(
             "Components", "Show the primary selected solution's hydrograph as the sum of its individual hydrographs",
             "components", lambda: self._simulate(), checkable=True)
+        self.history_action = self.action(
+            "Earlier generations", "Show the fronts the run reported on its way, fainter the older; their solutions "
+            "can be selected and simulated when the run kept their parameter sets", "restore",
+            lambda: self._history_toggled(), checkable=True)
         self.best_box = QComboBox()
         self.best_box.setToolTip("Select the best solution for an objective")
         self.best_box.setAccessibleName("Select the best solution for an objective")
@@ -174,7 +187,7 @@ class ExplorePage(Page):
     # ------------------------------------------------------------------ shell
 
     def context_actions(self):
-        return [self.knee_action, self.load_action, None, self.components_action]
+        return [self.knee_action, self.load_action, None, self.components_action, self.history_action]
 
     def active_chart(self):
         return self.ts
@@ -269,21 +282,34 @@ class ExplorePage(Page):
         if self._run and refs:
             self.ctx.session.load_solution(self._run.id, refs[0].index, refs[0].generation)
 
-    def _layer_index(self, key: str, i: int) -> int:
+    def _layer_ref(self, key: str, i: int) -> SolutionRef:
+        """The solution behind point *i* of scatter layer *key* (final front, filtered subsets or a report)."""
+        run_id = self._run.id  # type: ignore[union-attr]
+        _rid, report = parse_history_key(key)
+        if report is not None:
+            return SolutionRef(run_id, i, report)
         if key.endswith(":out"):
-            return self._pareto_other[i]
-        return self._pareto_rows[i] if self._pareto_rows is not None else i
+            return SolutionRef(run_id, self._pareto_other[i])
+        return SolutionRef(run_id, self._pareto_rows[i] if self._pareto_rows is not None else i)
 
     def _pareto_picked(self, key: str, i: int, add: bool) -> None:
         if self._run is not None:
-            self._pick(SolutionRef(self._run.id, self._layer_index(key, i)), add)
+            self._pick(self._layer_ref(key, i), add)
 
     def _pareto_range(self, picked: dict, add: bool) -> None:
         run = self._run
         if run is None:
             return
-        rows = sorted({self._layer_index(key, i) for key, idx in picked.items() for i in idx})
-        self.ctx.session.select_in_run(run.id, [SolutionRef(run.id, i) for i in rows], add=add)
+        refs = sorted({self._layer_ref(key, i) for key, idx in picked.items() for i in idx},
+                      key=lambda r: (-1 if r.generation is None else r.generation, r.index))
+        self.ctx.session.select_in_run(run.id, refs, add=add)
+
+    def _history_toggled(self) -> None:
+        run = self._run
+        if run is not None and self.history_action.isChecked() and not run.history:
+            self.selection_info.setText("This run has no recorded earlier generations.")
+        self._draw_pareto()
+        self._mark_selection()
 
     def _brush_changed(self, rows: list[int]) -> None:
         """A brush in the parallel coordinates filters the run everywhere and selects what passes it."""
@@ -328,15 +354,18 @@ class ExplorePage(Page):
             self._pareto_rows = list(rows)
             inside = set(rows)
             self._pareto_other = [i for i in range(run.n_solutions) if i not in inside]
-            self.pareto.set_layers([
+            layers = [
                 ParetoLayer(run.id, run.label, F[self._pareto_rows], run.objective_names, theme.series_color(0)),
                 ParetoLayer(run.id + ":out", "filtered out", F[self._pareto_other], run.objective_names,
                             theme.current().muted, faded=True, size=6),
-            ])
+            ]
         else:
             self._pareto_rows, self._pareto_other = None, []
-            self.pareto.set_layers([ParetoLayer(run.id, run.label, F, run.objective_names, theme.series_color(0),
-                                                knee=run.knee_index())])
+            layers = [ParetoLayer(run.id, run.label, F, run.objective_names, theme.series_color(0),
+                                  knee=run.knee_index())]
+        if self.history_action.isChecked():  # behind the front, not setting the axes
+            layers = history_layers(run, color=theme.current().muted) + layers
+        self.pareto.set_layers(layers)
 
     def _mark_selection(self) -> None:
         """Show the session's selection in the scatter and the parallel coordinates."""
@@ -349,10 +378,17 @@ class ExplorePage(Page):
         primary = None
         pos = {r: k for k, r in enumerate(self._pareto_rows)} if self._pareto_rows is not None else None
         out = {r: k for k, r in enumerate(self._pareto_other)}
-        for n, i in enumerate(indices):
-            key, k = (run.id, i) if pos is None else ((run.id, pos[i]) if i in pos else (run.id + ":out", out[i]))
+        refs = self._refs()
+        for ref in refs:
+            i = ref.index
+            if not ref.is_final:
+                key, k = history_key(run.id, ref.generation), i
+            elif pos is None:
+                key, k = run.id, i
+            else:
+                key, k = (run.id, pos[i]) if i in pos else (run.id + ":out", out[i])
             marks.setdefault(key, []).append(k)
-            if n == 0:
+            if ref == refs[0]:
                 primary = (key, k)
         self.pareto.set_selection(marks, primary=primary)
 
