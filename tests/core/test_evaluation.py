@@ -147,9 +147,9 @@ def test_slow_unit_hydrograph_bounds_are_reported_by_process_and_slider(short_fr
     from sparsehydro_viewer.core.processes import ProcessDesign, to_tree
 
     spec = ModelSpec(to_tree(ProcessDesign(routing=["rtk-triangle", "gamma-uh"])))
-    with warnings.catch_warnings():
-        warnings.simplefilter("error")  # the library's console warning no longer escapes
+    with warnings.catch_warnings(record=True) as caught:  # what would reach the console, with the app's filters
         ev = Evaluator(spec, short_frame, OBJS[:1], Period())
+    assert not [w for w in caught if "deliver half its volume" in str(w.message)]
     slow = {r.label: r for r in ev.slow_responses}
     assert slow, "the default bounds allow responses slower than a one-week record"
     r = next(iter(slow.values()))

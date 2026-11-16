@@ -4,13 +4,17 @@ Only this package and :mod:`sparsehydro_viewer.services` import
 :mod:`sparsehydro`; widgets and views work with the objects defined here.
 """
 
-from .catalog import CATALOG, ModelSpec, ParameterInfo, ParameterState, parameter_counts
-from .data import DatasetSpec, Period, load_dataset
-from .evaluation import Evaluation, Evaluator
-from .objectives import DEFAULT_OBJECTIVES, OBJECTIVES, ObjectiveSpec
-from .project import Project
-from .runs import RunRecord
-from .solvers import SOLVERS, SolverSpec
+from .diagnostics import quiet_slow_response_warning
+
+quiet_slow_response_warning()
+
+from .catalog import CATALOG, ModelSpec, ParameterInfo, ParameterState, parameter_counts  # noqa: E402
+from .data import DatasetSpec, Period, load_dataset  # noqa: E402
+from .evaluation import Evaluation, Evaluator  # noqa: E402
+from .objectives import DEFAULT_OBJECTIVES, OBJECTIVES, ObjectiveSpec  # noqa: E402
+from .project import Project  # noqa: E402
+from .runs import RunRecord  # noqa: E402
+from .solvers import SOLVERS, SolverSpec  # noqa: E402
 
 
 def versions() -> dict[str, str]:

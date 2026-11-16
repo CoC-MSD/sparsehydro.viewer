@@ -93,6 +93,26 @@ def complexity_front(points: Sequence[ComplexityPoint]) -> list[ComplexityPoint]
     return sorted((p for p, m in zip(points, mask) if m), key=lambda p: (p.n_params, p.score))
 
 
+_SLOW_WARNING = r".*response needs .* h to deliver half its volume"
+
+
+def quiet_slow_response_warning() -> None:
+    """Filter sparsehydro's slow-bounds console warning for the process (idempotent).
+
+    sparsehydro warns every time a calibration problem is built (each model change, each worker); the viewer
+    reports the same finding once, by process and slider (:func:`slow_responses`). A permanent filter is
+    used, not ``warnings.catch_warnings()``: that swaps the process-wide filter list and loses the filter when
+    the live-evaluation thread and background jobs build problems at the same time. Called at import and
+    again wherever problems are built, in case something reset the filters (as test runners do).
+    """
+    import warnings
+
+    # a filter is (action, compiled message regex, category, module, lineno); compare the regex by its source
+    if not any(f[0] == "ignore" and getattr(f[1], "pattern", None) == _SLOW_WARNING and f[2] is UserWarning
+               for f in warnings.filters):
+        warnings.filterwarnings("ignore", message=_SLOW_WARNING, category=UserWarning)
+
+
 @dataclass(frozen=True)
 class SlowResponse:
     """A unit hydrograph whose bounds allow responses slower than the data.
